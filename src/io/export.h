@@ -44,7 +44,8 @@ enum class FileFormat {
   PNG,
   PDF,
   POV,
-  PARAM
+  PARAM,
+  BINMESH    // WASM binary mesh export
 };
 
 struct FileFormatInfo {
@@ -324,6 +325,7 @@ void export_pdf(const std::shared_ptr<const Geometry>& geom, std::ostream& outpu
                 const ExportInfo& exportInfo);
 void export_nefdbg(const std::shared_ptr<const Geometry>& geom, std::ostream& output);
 void export_nef3(const std::shared_ptr<const Geometry>& geom, std::ostream& output);
+void export_binary_mesh_to_static_buffer(const std::shared_ptr<const Geometry>& geom, std::ostream& output);
 
 enum class Previewer { OPENCSG, THROWNTOGETHER };
 enum class RenderType { GEOMETRY, BACKEND_SPECIFIC, OPENCSG, THROWNTOGETHER };

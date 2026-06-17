@@ -306,8 +306,9 @@ if (CMAKE_SYSTEM_NAME STREQUAL Emscripten)
     -sABORT_ON_WASM_EXCEPTIONS
     -sALLOW_MEMORY_GROWTH=1
     -sDISABLE_EXCEPTION_CATCHING=0
-    -sEXIT_RUNTIME=1
+    -sEXIT_RUNTIME=0
     -sEXPORTED_RUNTIME_METHODS=['ENV','ERRNO_CODES','FS','PATH','callMain']
+    -sEXPORTED_FUNCTIONS=['_main','_openscad_get_binary_mesh_ptr','_openscad_get_binary_mesh_size','_openscad_free_binary_mesh']
     -sMAXIMUM_MEMORY=4GB
 
     # -g produces DWARF debug info, which is quite large and may need debugger extensions.
@@ -320,6 +321,7 @@ if (CMAKE_SYSTEM_NAME STREQUAL Emscripten)
       -sEXPORT_ES6=1
       -sEXPORT_NAME=OpenSCAD
       -sMODULARIZE=1
+      --post-js "${CMAKE_SOURCE_DIR}/src/wasm/post.js"
     )
   elseif (WASM_BUILD_TYPE STREQUAL "node")
     target_link_options(OpenSCADExe PUBLIC
@@ -1091,6 +1093,7 @@ set(CORE_SOURCES
   src/io/export_pov.cc
   src/io/export_param.cc
   src/io/export_wrl.cc
+  src/wasm/binary_mesh_export.cc
   src/io/fileutils.cc
   src/io/import_amf.cc
   src/io/import_json.cc

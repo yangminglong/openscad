@@ -56,6 +56,9 @@
 #include "glview/ColorMap.h"
 #include "glview/RenderSettings.h"
 #include "utils/printutils.h"
+#ifdef __EMSCRIPTEN__
+#include "wasm/binary_mesh_export.h"
+#endif
 
 #define QUOTE(x__) #x__
 #define QUOTED(x__) QUOTE(x__)
@@ -97,6 +100,9 @@ Containers& containers()
     add_item(*containers, {FileFormat::PNG, "png", "png", "PNG"});
     add_item(*containers, {FileFormat::PDF, "pdf", "pdf", "PDF"});
     add_item(*containers, {FileFormat::POV, "pov", "pov", "POV"});
+#ifdef __EMSCRIPTEN__
+    add_item(*containers, {FileFormat::BINMESH, "binmesh", "binmesh", "Binary Mesh (WASM)"});
+#endif
 
     // Alias
     containers->identifierToInfo["stl"] = containers->identifierToInfo["asciistl"];
@@ -169,7 +175,11 @@ bool is3D(FileFormat format)
   return format == FileFormat::ASCII_STL || format == FileFormat::BINARY_STL ||
          format == FileFormat::OBJ || format == FileFormat::OFF || format == FileFormat::WRL ||
          format == FileFormat::AMF || format == FileFormat::_3MF || format == FileFormat::NEFDBG ||
-         format == FileFormat::NEF3 || format == FileFormat::POV;
+         format == FileFormat::NEF3 || format == FileFormat::POV
+#ifdef __EMSCRIPTEN__
+         || format == FileFormat::BINMESH
+#endif
+         ;
 }
 
 bool is2D(FileFormat format)
@@ -220,6 +230,9 @@ static void exportFile(const std::shared_ptr<const Geometry>& root_geom, std::os
   case FileFormat::SVG:        export_svg(root_geom, output, exportInfo); break;
   case FileFormat::PDF:        export_pdf(root_geom, output, exportInfo); break;
   case FileFormat::POV:        export_pov(root_geom, output, exportInfo); break;
+#ifdef __EMSCRIPTEN__
+  case FileFormat::BINMESH:   export_binary_mesh_to_static_buffer(root_geom, output); break;
+#endif
 #ifdef ENABLE_CGAL
   case FileFormat::NEFDBG: export_nefdbg(root_geom, output); break;
   case FileFormat::NEF3:   export_nef3(root_geom, output); break;
@@ -242,7 +255,7 @@ bool exportFileByName(const std::shared_ptr<const Geometry>& root_geom, const st
 {
   std::ios::openmode mode = std::ios::out | std::ios::trunc;
   if (exportInfo.format == FileFormat::_3MF || exportInfo.format == FileFormat::BINARY_STL ||
-      exportInfo.format == FileFormat::PDF) {
+      exportInfo.format == FileFormat::PDF || exportInfo.format == FileFormat::BINMESH) {
     mode |= std::ios::binary;
   }
   const std::filesystem::path path(filename);
