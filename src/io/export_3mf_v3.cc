@@ -51,8 +51,8 @@ static const char* PAINT_COLOR_MAP[] = {
 };
 
 static std::string getPaintColor(int extruderId) {
-  // extruderId is 1-based. Map to 0-based PAINT_COLOR_MAP index.
-  int idx = extruderId - 1;
+  //  Map to 0-based PAINT_COLOR_MAP index.
+  int idx = extruderId;
   if (idx < 0 || idx >= static_cast<int>(sizeof(PAINT_COLOR_MAP) / sizeof(PAINT_COLOR_MAP[0]))) {
     return "";
   }
@@ -246,7 +246,6 @@ static std::string buildSlic3rPEConfig(const std::vector<int>& extruderColorsId,
   std::map<int, std::string> idToColor;
   for (uint32_t i = 0; i < numColors; ++i) {
     int extruderId = (i < extruderColorsId.size()) ? extruderColorsId[i] : 0;
-    if (extruderId == 0) continue; // skip unassigned
     if (idToColor.find(extruderId) != idToColor.end()) continue; // already collected
     float r = colorPalette[i * 4 + 0];
     float g = colorPalette[i * 4 + 1];

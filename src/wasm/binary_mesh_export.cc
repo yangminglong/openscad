@@ -182,10 +182,12 @@ void export_binary_mesh_to_static_buffer(const std::shared_ptr<const Geometry>& 
 
   TriangleCollector collector;
 
-  // Ensure default yellow/gold color at palette index 0
-  getOrInsertColor(collector, Color4f(0.98f, 0.74f, 0.15f, 1.0f));
-
   collectGeometry(collector, geom);
+
+  if (collector.palette.size() == 0) {
+    // Ensure default yellow/gold color at palette index 0
+    getOrInsertColor(collector, Color4f(0.98f, 0.74f, 0.15f, 1.0f));
+  }
 
   uint32_t numVertices = static_cast<uint32_t>(collector.positions.size() / 3);
   uint32_t numIndices = static_cast<uint32_t>(collector.indices.size());
