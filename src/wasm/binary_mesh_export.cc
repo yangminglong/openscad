@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <sstream>
 #include <vector>
 
 #include "geometry/Geometry.h"
@@ -16,6 +17,9 @@
 
 // Static buffer for storing the binary mesh export result.
 static std::vector<uint8_t> binaryMeshBuffer;
+
+// Static buffer for storing the 3MF v3 export result.
+static std::vector<uint8_t> _3mfOutputBuffer;
 
 extern "C" {
 
@@ -30,6 +34,30 @@ uint32_t openscad_get_binary_mesh_size() {
 void openscad_free_binary_mesh() {
   binaryMeshBuffer.clear();
   binaryMeshBuffer.shrink_to_fit();
+}
+
+void openscad_export_3mf_v3(const uint8_t* binaryMeshData, uint32_t binaryMeshSize,
+                            const int32_t* extruderColorsId, uint32_t count) {
+  _3mfOutputBuffer.clear();
+  std::ostringstream oss;
+  std::vector<uint8_t> meshData(binaryMeshData, binaryMeshData + binaryMeshSize);
+  std::vector<int> ids(extruderColorsId, extruderColorsId + count);
+  export_3mf_v3(meshData, ids, oss);
+  std::string result = oss.str();
+  _3mfOutputBuffer.assign(result.begin(), result.end());
+}
+
+uint8_t* openscad_get_3mf_output_ptr() {
+  return _3mfOutputBuffer.data();
+}
+
+uint32_t openscad_get_3mf_output_size() {
+  return static_cast<uint32_t>(_3mfOutputBuffer.size());
+}
+
+void openscad_free_3mf_output() {
+  _3mfOutputBuffer.clear();
+  _3mfOutputBuffer.shrink_to_fit();
 }
 
 } // extern "C"

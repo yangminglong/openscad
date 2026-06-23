@@ -308,7 +308,7 @@ if (CMAKE_SYSTEM_NAME STREQUAL Emscripten)
     -sDISABLE_EXCEPTION_CATCHING=0
     -sEXIT_RUNTIME=0
     -sEXPORTED_RUNTIME_METHODS=['ENV','ERRNO_CODES','FS','PATH','callMain']
-    -sEXPORTED_FUNCTIONS=['_main','_openscad_get_binary_mesh_ptr','_openscad_get_binary_mesh_size','_openscad_free_binary_mesh']
+    -sEXPORTED_FUNCTIONS=['_main','_malloc','_free','_openscad_get_binary_mesh_ptr','_openscad_get_binary_mesh_size','_openscad_free_binary_mesh','_openscad_export_3mf_v3','_openscad_get_3mf_output_ptr','_openscad_get_3mf_output_size','_openscad_free_3mf_output']
     -sMAXIMUM_MEMORY=4GB
 
     # -g produces DWARF debug info, which is quite large and may need debugger extensions.
@@ -729,12 +729,14 @@ if (Lib3MF_FOUND)
   message(STATUS "lib3mf: ${Lib3MF_VERSION}")
   target_link_libraries(OpenSCADLibInternal PUBLIC Lib3MF::Lib3MF)
   target_compile_definitions(OpenSCADLibInternal PUBLIC ENABLE_LIB3MF)
+  set(LIB3MF_V3_SOURCES src/io/export_3mf_v3.cc)
   if (Lib3MF_VERSION VERSION_GREATER_EQUAL 2)
     set(LIB3MF_SOURCES src/io/export_3mf_v2.cc src/io/import_3mf_v2.cc)
   else()
     set(LIB3MF_SOURCES src/io/export_3mf_v1.cc src/io/import_3mf_v1.cc)
   endif()
 else()
+  set(LIB3MF_V3_SOURCES src/io/export_3mf_v3.cc)
   set(LIB3MF_SOURCES src/io/export_3mf_dummy.cc src/io/import_3mf_dummy.cc)
   message(STATUS "lib3mf: disabled (not found)")
 endif()
@@ -1111,6 +1113,7 @@ set(CORE_SOURCES
   src/utils/vector_math.cc
   src/utils/version_check.h
   ${LIB3MF_SOURCES}
+	  ${LIB3MF_V3_SOURCES}
   ${PLATFORM_SOURCES}
   ${FLEX_openscad_lexer_OUTPUTS}
   ${BISON_openscad_parser_OUTPUTS}
