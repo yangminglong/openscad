@@ -109,3 +109,8 @@ scripts/run-clang-tidy-cached
 package.json
 package-lock.json
 node_modules/**
+
+
+# Allow built-in WASM to avoid re-download/re-compile
+!/build-web/openscad.wasm
+!/build-web/openscad.js
