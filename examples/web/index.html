@@ -1,271 +1,460 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>OpenSCAD WASM Demo</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:system-ui,sans-serif;background:#1e1e2e;color:#cdd6f4;height:100vh;display:flex}
-#left-panel{width:420px;min-width:360px;display:flex;flex-direction:column;border-right:1px solid #45475a}
-#editor-wrap{flex:1;overflow:hidden}
-#editor{width:100%;height:100%;padding:12px;font-family:'Fira Code',monospace;font-size:13px;line-height:1.5;background:#181825;color:#cdd6f4;border:none;resize:none;outline:none;tab-size:2}
-#buttons{padding:10px 12px;display:flex;gap:8px;border-top:1px solid #45475a;background:#1e1e2e}
-.btn{padding:8px 18px;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500}
-.btn-run{background:#cba6f7;color:#1e1e2e}
-.btn-export{background:#a6e3a1;color:#1e1e2e}
-.btn:disabled{opacity:.4;cursor:not-allowed}
-#status{padding:6px 12px;font-size:11px;color:#a6adc8;min-height:28px}
-#right-panel{flex:1;position:relative;background:#313244}
-#info{position:absolute;bottom:12px;left:12px;font-size:11px;color:#bac2de;background:rgba(0,0,0,.5);padding:6px 10px;border-radius:6px}
-#loading{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.5);z-index:10}
-#loading.show{display:flex}
-#legend{position:absolute;top:8px;right:8px;background:rgba(0,0,0,.7);padding:8px 10px;border-radius:8px;font-size:11px;line-height:1.7;z-index:5;display:none}
-#legend .item{display:flex;align-items:center;gap:6px}
-#legend .swatch{width:12px;height:12px;border-radius:3px;border:1px solid rgba(255,255,255,.3);flex-shrink:0}
-#legend .hex{font-family:monospace;color:#bac2de}
-.spinner{width:36px;height:36px;border:3px solid #45475a;border-top-color:#cba6f7;border-radius:50%;animation:spin .7s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenSCAD WASM Demo</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box
+    }
+
+    body {
+      font-family: system-ui, sans-serif;
+      background: #1e1e2e;
+      color: #cdd6f4;
+      height: 100vh;
+      display: flex
+    }
+
+    #left-panel {
+      width: 420px;
+      min-width: 360px;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid #45475a
+    }
+
+    #editor-wrap {
+      flex: 1;
+      overflow: hidden
+    }
+
+    #editor {
+      width: 100%;
+      height: 100%;
+      padding: 12px;
+      font-family: 'Fira Code', monospace;
+      font-size: 13px;
+      line-height: 1.5;
+      background: #181825;
+      color: #cdd6f4;
+      border: none;
+      resize: none;
+      outline: none;
+      tab-size: 2
+    }
+
+    #buttons {
+      padding: 10px 12px;
+      display: flex;
+      gap: 8px;
+      border-top: 1px solid #45475a;
+      background: #1e1e2e
+    }
+
+    .btn {
+      padding: 8px 18px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500
+    }
+
+    .btn-run {
+      background: #cba6f7;
+      color: #1e1e2e
+    }
+
+    .btn-export {
+      background: #a6e3a1;
+      color: #1e1e2e
+    }
+
+    .btn:disabled {
+      opacity: .4;
+      cursor: not-allowed
+    }
+
+    #status {
+      padding: 6px 12px;
+      font-size: 11px;
+      color: #a6adc8;
+      min-height: 28px
+    }
+
+    #right-panel {
+      flex: 1;
+      position: relative;
+      background: #313244
+    }
+
+    #info {
+      position: absolute;
+      bottom: 12px;
+      left: 12px;
+      font-size: 11px;
+      color: #bac2de;
+      background: rgba(0, 0, 0, .5);
+      padding: 6px 10px;
+      border-radius: 6px
+    }
+
+    #loading {
+      position: absolute;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0, 0, 0, .5);
+      z-index: 10
+    }
+
+    #loading.show {
+      display: flex
+    }
+
+    #legend {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      background: rgba(0, 0, 0, .7);
+      padding: 8px 10px;
+      border-radius: 8px;
+      font-size: 11px;
+      line-height: 1.7;
+      z-index: 5;
+      display: none
+    }
+
+    #legend .item {
+      display: flex;
+      align-items: center;
+      gap: 6px
+    }
+
+    #legend .swatch {
+      width: 12px;
+      height: 12px;
+      border-radius: 3px;
+      border: 1px solid rgba(255, 255, 255, .3);
+      flex-shrink: 0
+    }
+
+    #legend .hex {
+      font-family: monospace;
+      color: #bac2de
+    }
+
+    .spinner {
+      width: 36px;
+      height: 36px;
+      border: 3px solid #45475a;
+      border-top-color: #cba6f7;
+      border-radius: 50%;
+      animation: spin .7s linear infinite
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg)
+      }
+    }
+  </style>
 </head>
+
 <body>
 
-<div id="left-panel">
-  <div id="editor-wrap">
-    <textarea id="editor" spellcheck="false">// OpenSCAD WASM Demo
+  <div id="left-panel">
+    <div id="editor-wrap">
+      <textarea id="editor" spellcheck="false">// OpenSCAD WASM Demo (BOSL2)
+include <BOSL2/std.scad>
 difference() {
   sphere(r = 20, $fn = 72);
   translate([0, 0, -25]) cube(50, center = true);
 }
 </textarea>
+    </div>
+    <div id="buttons">
+      <button class="btn btn-run" id="btn-run" disabled>渲染</button>
+      <button class="btn btn-export" id="btn-export" disabled>导出 3MF</button>
+      <span id="status">加载 WASM 中...</span>
+    </div>
   </div>
-  <div id="buttons">
-    <button class="btn btn-run" id="btn-run" disabled>渲染</button>
-    <button class="btn btn-export" id="btn-export" disabled>导出 3MF</button>
-    <span id="status">加载 WASM 中...</span>
+
+  <div id="right-panel">
+    <div id="loading">
+      <div class="spinner"></div>
+    </div>
+    <div id="legend"></div>
+    <div id="info">未加载</div>
   </div>
-</div>
 
-<div id="right-panel">
-  <div id="loading"><div class="spinner"></div></div>
-  <div id="legend"></div>
-  <div id="info">未加载</div>
-</div>
-
-<script type="importmap">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script type="importmap">
 {"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js",
 "three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}
 </script>
 
-<script type="module">
-import OpenSCAD from "./openscad.js";
-import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+  <script type="module">
+    import OpenSCAD from "./openscad.js";
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
-// ---------- Three.js scene ----------
-const container = document.getElementById('right-panel');
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x313244);
-const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 5000);
-camera.position.set(40, 60, 50); camera.up.set(0, 0, 1);
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-container.appendChild(renderer.domElement);
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(0, 0, 0); controls.update();
-scene.add(new THREE.AmbientLight(0xffffff, 0.4));
-const dir = new THREE.DirectionalLight(0xffffff, 0.8); dir.position.set(1, 1, 0.8); scene.add(dir);
-const grid = new THREE.GridHelper(60, 20, 0x585b70, 0x45475a); grid.rotation.x = Math.PI / 2; scene.add(grid);
-let modelGroup = new THREE.Group(); scene.add(modelGroup);
+    // ---------- Three.js scene ----------
+    const container = document.getElementById('right-panel');
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x313244);
+    const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 5000);
+    camera.position.set(40, 60, 50); camera.up.set(0, 0, 1);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    container.appendChild(renderer.domElement);
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, 0, 0); controls.update();
+    scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+    const dir = new THREE.DirectionalLight(0xffffff, 0.8); dir.position.set(1, 1, 0.8); scene.add(dir);
+    const grid = new THREE.GridHelper(60, 20, 0x585b70, 0x45475a); grid.rotation.x = Math.PI / 2; scene.add(grid);
+    let modelGroup = new THREE.Group(); scene.add(modelGroup);
 
-function resize() {
-  const w = container.clientWidth, h = container.clientHeight;
-  camera.aspect = w / h; camera.updateProjectionMatrix();
-  renderer.setSize(w, h);
-}
-window.addEventListener('resize', resize); resize();
-function animate() { requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); }
-animate();
+    function resize() {
+      const w = container.clientWidth, h = container.clientHeight;
+      camera.aspect = w / h; camera.updateProjectionMatrix();
+      renderer.setSize(w, h);
+    }
+    window.addEventListener('resize', resize); resize();
+    function animate() { requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); }
+    animate();
 
-// ---------- Zero-copy binary mesh parser (views into WASM memory) ----------
-function parseBinaryMeshView(mem, ptr) {
-  const v = new DataView(mem.buffer, ptr, 16);
-  const nv = v.getUint32(0, true), nf = v.getUint32(4, true), nc = v.getUint32(8, true);
-  let off = ptr + 16;
-  const pos = new Float32Array(mem.buffer, off, nv * 3);  off += nv * 3 * 4;
-  const idx = new Uint32Array(mem.buffer, off, nf * 3);   off += nf * 3 * 4;
-  const ci  = new Int32Array(mem.buffer, off, nf);         off += nf * 4;
-  const pal = new Float32Array(mem.buffer, off, nc * 4);
-  return { nv, nf, nc, pos, idx, ci, pal };
-}
+    // ---------- Zero-copy binary mesh parser (views into WASM memory) ----------
+    function parseBinaryMeshView(mem, ptr) {
+      const v = new DataView(mem.buffer, ptr, 16);
+      const nv = v.getUint32(0, true), nf = v.getUint32(4, true), nc = v.getUint32(8, true);
+      let off = ptr + 16;
+      const pos = new Float32Array(mem.buffer, off, nv * 3); off += nv * 3 * 4;
+      const idx = new Uint32Array(mem.buffer, off, nf * 3); off += nf * 3 * 4;
+      const ci = new Int32Array(mem.buffer, off, nf); off += nf * 4;
+      const pal = new Float32Array(mem.buffer, off, nc * 4);
+      return { nv, nf, nc, pos, idx, ci, pal };
+    }
 
-// ---------- Build Three.js mesh (copies only what Three.js needs) ----------
-function buildScene(data) {
-  modelGroup.traverse(c => { if (c.geometry) c.geometry.dispose(); if (c.material) c.material.dispose(); });
-  scene.remove(modelGroup);
-  modelGroup = new THREE.Group(); scene.add(modelGroup);
-  document.getElementById('info').textContent = '';
-  if (!data || data.nf === 0) return;
-  const { nf, pos, idx, ci, pal } = data;
-  const groups = new Map();
-  for (let fi = 0; fi < nf; fi++) { const c = ci[fi]; if (!groups.has(c)) groups.set(c, []); groups.get(c).push(fi); }
-  let totalTris = 0;
-  for (const [colorIdx, faces] of groups) {
-    const geo = new THREE.BufferGeometry();
-    const verts = [], indices = []; const idxMap = new Map(); let vi = 0;
-    for (const fi of faces) {
-      for (let k = 0; k < 3; k++) {
-        const oi = idx[fi * 3 + k];
-        if (!idxMap.has(oi)) { idxMap.set(oi, vi); verts.push(pos[oi*3], pos[oi*3+1], pos[oi*3+2]); vi++; }
-        indices.push(idxMap.get(oi));
+    // ---------- Build Three.js mesh (copies only what Three.js needs) ----------
+    function buildScene(data) {
+      modelGroup.traverse(c => { if (c.geometry) c.geometry.dispose(); if (c.material) c.material.dispose(); });
+      scene.remove(modelGroup);
+      modelGroup = new THREE.Group(); scene.add(modelGroup);
+      document.getElementById('info').textContent = '';
+      if (!data || data.nf === 0) return;
+      const { nf, pos, idx, ci, pal } = data;
+      const groups = new Map();
+      for (let fi = 0; fi < nf; fi++) { const c = ci[fi]; if (!groups.has(c)) groups.set(c, []); groups.get(c).push(fi); }
+      let totalTris = 0;
+      for (const [colorIdx, faces] of groups) {
+        const geo = new THREE.BufferGeometry();
+        const verts = [], indices = []; const idxMap = new Map(); let vi = 0;
+        for (const fi of faces) {
+          for (let k = 0; k < 3; k++) {
+            const oi = idx[fi * 3 + k];
+            if (!idxMap.has(oi)) { idxMap.set(oi, vi); verts.push(pos[oi * 3], pos[oi * 3 + 1], pos[oi * 3 + 2]); vi++; }
+            indices.push(idxMap.get(oi));
+          }
+        }
+        geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+        geo.setIndex(indices); geo.computeVertexNormals();
+        let r = 0.98, g = 0.74, b = 0.15;
+        if (colorIdx >= 0) { r = pal[colorIdx * 4]; g = pal[colorIdx * 4 + 1]; b = pal[colorIdx * 4 + 2]; }
+        modelGroup.add(new THREE.Mesh(geo, new THREE.MeshPhongMaterial({
+          color: new THREE.Color(r, g, b), specular: 0x111111, shininess: 30, side: THREE.DoubleSide
+        })));
+        totalTris += faces.length;
+      }
+      const box = new THREE.Box3().setFromObject(modelGroup);
+      const c = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3()).length();
+      controls.target.copy(c); camera.position.set(c.x + s * 0.7, c.y - s * 0.5, c.z + s * 0.8); controls.update();
+      document.getElementById('info').textContent = `顶点 ${pos.length / 3}  三角面 ${totalTris}  颜色 ${pal.length / 4} / ${groups.size}`;
+      const leg = document.getElementById("legend");
+      let lhtml = "";
+      for (const [c, faces] of groups) { const r = Math.round(pal[c * 4] * 255), g = Math.round(pal[c * 4 + 1] * 255), b = Math.round(pal[c * 4 + 2] * 255); const h = "#" + [r, g, b].map(v => v.toString(16).padStart(2, "0")).join(""); lhtml += `<div class=item><span class=swatch style=background:${h}></span><span class=hex>${h}</span></div>` } leg.innerHTML = lhtml; leg.style.display = lhtml ? "block" : "none";
+    }
+
+    // ---------- WASM ----------
+    let wasmInst = null;
+    let lastMeshPtr = 0, lastMeshSize = 0;
+    let lastPalette = null; // Float32Array view into WASM memory
+
+    async function initWasm() {
+      try {
+        wasmInst = await OpenSCAD({
+          noInitialRun: true,
+          print: t => console.debug("[stdout]", t),
+          printErr: t => console.debug("[stderr]", t),
+        });
+        await mountFontsAndLibs(wasmInst);
+        document.getElementById("status").textContent = "就绪 (含 BOSL2)";
+        document.getElementById("btn-run").disabled = false;
+        document.getElementById("btn-run").onclick = render;
+        document.getElementById("btn-export").disabled = false;
+        document.getElementById("btn-export").onclick = export3mf;
+      } catch (e) {
+        document.getElementById("status").textContent = "WASM 加载失败: " + e;
       }
     }
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
-    geo.setIndex(indices); geo.computeVertexNormals();
-    let r = 0.98, g = 0.74, b = 0.15;
-    if (colorIdx >= 0) { r = pal[colorIdx*4]; g = pal[colorIdx*4+1]; b = pal[colorIdx*4+2]; }
-    modelGroup.add(new THREE.Mesh(geo, new THREE.MeshPhongMaterial({
-      color: new THREE.Color(r, g, b), specular: 0x111111, shininess: 30, side: THREE.DoubleSide
-    })));
-    totalTris += faces.length;
-  }
-  const box = new THREE.Box3().setFromObject(modelGroup);
-  const c = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3()).length();
-  controls.target.copy(c); camera.position.set(c.x+s*0.7, c.y-s*0.5, c.z+s*0.8); controls.update();
-  document.getElementById('info').textContent = `顶点 ${pos.length/3}  三角面 ${totalTris}  颜色 ${pal.length/4} / ${groups.size}`;
-  const leg=document.getElementById("legend");
-  let lhtml="";
-  for(const[c,faces]of groups)
-  {const r=Math.round(pal[c*4]*255),g=Math.round(pal[c*4+1]*255),b=Math.round(pal[c*4+2]*255);const h="#"+[r,g,b].map(v=>v.toString(16).padStart(2,"0")).join("");lhtml+=`<div class=item><span class=swatch style=background:${h}></span><span class=hex>${h}</span></div>`}leg.innerHTML=lhtml;leg.style.display=lhtml?"block":"none";
-}
 
-// ---------- WASM ----------
-let wasmInst = null;
-let lastMeshPtr = 0, lastMeshSize = 0;
-let lastPalette = null; // Float32Array view into WASM memory
-
-async function initWasm() {
-  try {
-    wasmInst = await OpenSCAD({
-      noInitialRun: true,
-      print: t => console.debug('[stdout]', t),
-      printErr: t => console.debug('[stderr]', t),
-    });
-    document.getElementById('status').textContent = '就绪';
-    document.getElementById('btn-run').disabled = false;
-    document.getElementById('btn-run').onclick = render;
-    document.getElementById('btn-export').disabled = false;
-    document.getElementById('btn-export').onclick = export3mf;
-  } catch (e) {
-    document.getElementById('status').textContent = 'WASM 加载失败: ' + e;
-  }
-}
-
-// ---------- Render (zero-copy: reads directly from WASM memory) ----------
-window.render = async function() {
-  const inst = wasmInst; if (!inst) return;
-  const el = document.getElementById('loading'), st = document.getElementById('status'), btn = document.getElementById('btn-run');
-  el.classList.add('show'); btn.disabled = true; st.textContent = '渲染中...';
-  // Free previous mesh
-  if (lastMeshPtr) { inst._openscad_free_binary_mesh(); lastMeshPtr = 0; }
-
-  try {
-    inst.FS.writeFile('/model.scad', document.getElementById('editor').value);
-    inst.callMain(['/model.scad', '-o', '/model.binmesh']);
-  } catch (e) {
-    st.textContent = '渲染失败: ' + e; el.classList.remove('show'); btn.disabled = false; return;
-  }
-
-  const mem = inst.wasmMemory;
-  if (inst._openscad_get_binary_mesh_ptr) {
-    const ptr = inst._openscad_get_binary_mesh_ptr();
-    const size = inst._openscad_get_binary_mesh_size();
-    if (ptr > 0 && size > 0) {
-      // Zero-copy: parse directly from WASM memory, defer free
-      const data = parseBinaryMeshView(mem, ptr);
-      lastMeshPtr = ptr; lastMeshSize = size;
-      lastPalette = data.pal; // keep reference for 3MF export
-      buildScene(data);
-      st.textContent = `完成 · ${(size/1024).toFixed(1)} KB (零拷贝)`;
-      el.classList.remove('show'); btn.disabled = false; return;
+    async function mountFontsAndLibs(inst) {
+      const FS = inst.FS;
+      FS.mkdir("/libraries");
+      FS.mkdir("/fonts");
+      FS.mkdir("/etc");
+      FS.mkdir("/etc/fonts");
+      const libZips = ["BOSL2"];
+      for (const name of libZips) {
+        try {
+          const r = await fetch(`/libraries/${name}.zip`);
+          if (!r.ok) continue;
+          const zip = await JSZip.loadAsync(await r.arrayBuffer());
+          const libPath = `/libraries/${name}`;
+          FS.mkdir(libPath);
+          for (const [fn, file] of Object.entries(zip.files)) {
+            if (file.dir) continue;
+            const content = await file.async("uint8array");
+            const fp = `${libPath}/${fn}`;
+            const parts = fn.split("/");
+            let dp = libPath;
+            for (let i = 0; i < parts.length - 1; i++) {
+              dp += "/" + parts[i];
+              try { FS.mkdir(dp); } catch (e) { }
+            }
+            FS.writeFile(fp, content);
+          }
+          console.log(`[libs] ${name} mounted`);
+        } catch (e) { console.warn(`[libs] ${name} failed:`, e); }
+      }
+      // fonts.conf
+      FS.writeFile("/etc/fonts/fonts.conf", `<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
+<fontconfig><dir>/fonts</dir><cachedir>/fonts-cache</cachedir>
+<config><rescan><int>30</int></rescan></config></fontconfig>`);
+      // Liberation fonts
+      const fontFiles = ["LiberationSans-Regular.ttf", "LiberationSans-Bold.ttf", "LiberationSans-Italic.ttf", "LiberationSans-BoldItalic.ttf", "LiberationSerif-Regular.ttf", "LiberationSerif-Bold.ttf", "LiberationSerif-Italic.ttf", "LiberationSerif-BoldItalic.ttf", "LiberationMono-Regular.ttf", "LiberationMono-Bold.ttf", "LiberationMono-Italic.ttf", "LiberationMono-BoldItalic.ttf"];
+      for (const fn of fontFiles) {
+        try { const r = await fetch(`/fonts/${fn}`); if (r.ok) FS.writeFile(`/fonts/${fn}`, new Uint8Array(await r.arrayBuffer())); } catch (e) { }
+      }
+      console.log("[fonts] Liberation mounted");
     }
-  }
-  // Fallback OFF
-  try {
-    const off = inst.FS.readFile('/model.off', { encoding: 'utf8' });
-    const poly = parseOffToPoly(off);
-    const buf = buildBinaryMeshBuffer(poly);
-    const data = parseBinaryMeshView({ buffer: buf }, 0);
-    buildScene(data);
-    st.textContent = `完成 · ${(buf.byteLength/1024).toFixed(1)} KB (OFF)`;
-  } catch (e) {
-    st.textContent = '无法读取模型: ' + e;
-  }
-  el.classList.remove('show'); btn.disabled = false;
-};
 
-// ---------- Export 3MF (calls C++ export_3mf_v3) ----------
-window.export3mf = async function() {
-  const inst = wasmInst; if (!inst) return;
-  if (!lastMeshPtr || !inst._openscad_export_3mf_v3) {
-    alert("请先渲染模型，且 WASM 需支持 export_3mf_v3");
-    return;
-  }
-  const st = document.getElementById("status");
-  st.textContent = "导出 3MF...";
-  try {
-    const mem = inst.wasmMemory;
-    const data = parseBinaryMeshView(mem, lastMeshPtr);
-    const usedIndices = new Set(); for (let fi = 0; fi < data.nf; fi++) usedIndices.add(data.ci[fi]);
-    const hexToId = new Map(); let nextId = 1;
-    const ids = new Int32Array(data.nc);
-    for (let i = 0; i < data.nc; i++) ids[i] = i;
-    const idsPtr = inst._malloc(data.nc * 4);
-    new Int32Array(mem.buffer, idsPtr, data.nc).set(ids);
-    inst._openscad_export_3mf_v3(lastMeshPtr, lastMeshSize, idsPtr, data.nc);
-    const outPtr = inst._openscad_get_3mf_output_ptr();
-    const outSize = inst._openscad_get_3mf_output_size();
-    if (outPtr > 0 && outSize > 0) {
-      const blob = new Blob([mem.buffer.slice(outPtr, outPtr + outSize)], { type: "model/3mf" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a"); a.href = url; a.download = "model.3mf"; a.click();
-      URL.revokeObjectURL(url);
-      inst._openscad_free_3mf_output();
-      st.textContent = "导出完成 · " + (outSize/1024).toFixed(1) + " KB";
-    } else {
-      st.textContent = "导出失败：无输出";
+    // ---------- Render (zero-copy: reads directly from WASM memory) ----------
+    window.render = async function () {
+      const inst = wasmInst; if (!inst) return;
+      const el = document.getElementById('loading'), st = document.getElementById('status'), btn = document.getElementById('btn-run');
+      el.classList.add('show'); btn.disabled = true; st.textContent = '渲染中...';
+      // Free previous mesh
+      if (lastMeshPtr) { inst._openscad_free_binary_mesh(); lastMeshPtr = 0; }
+
+      try {
+        inst.FS.writeFile('/model.scad', document.getElementById('editor').value);
+        inst.callMain(['/model.scad', '-o', '/model.binmesh']);
+      } catch (e) {
+        st.textContent = '渲染失败: ' + e; el.classList.remove('show'); btn.disabled = false; return;
+      }
+
+      const mem = inst.wasmMemory;
+      if (inst._openscad_get_binary_mesh_ptr) {
+        const ptr = inst._openscad_get_binary_mesh_ptr();
+        const size = inst._openscad_get_binary_mesh_size();
+        if (ptr > 0 && size > 0) {
+          // Zero-copy: parse directly from WASM memory, defer free
+          const data = parseBinaryMeshView(mem, ptr);
+          lastMeshPtr = ptr; lastMeshSize = size;
+          lastPalette = data.pal; // keep reference for 3MF export
+          buildScene(data);
+          st.textContent = `完成 · ${(size / 1024).toFixed(1)} KB (零拷贝)`;
+          el.classList.remove('show'); btn.disabled = false; return;
+        }
+      }
+      // Fallback OFF
+      try {
+        const off = inst.FS.readFile('/model.off', { encoding: 'utf8' });
+        const poly = parseOffToPoly(off);
+        const buf = buildBinaryMeshBuffer(poly);
+        const data = parseBinaryMeshView({ buffer: buf }, 0);
+        buildScene(data);
+        st.textContent = `完成 · ${(buf.byteLength / 1024).toFixed(1)} KB (OFF)`;
+      } catch (e) {
+        st.textContent = '无法读取模型: ' + e;
+      }
+      el.classList.remove('show'); btn.disabled = false;
+    };
+
+    // ---------- Export 3MF (calls C++ export_3mf_v3) ----------
+    window.export3mf = async function () {
+      const inst = wasmInst; if (!inst) return;
+      if (!lastMeshPtr || !inst._openscad_export_3mf_v3) {
+        alert("请先渲染模型，且 WASM 需支持 export_3mf_v3");
+        return;
+      }
+      const st = document.getElementById("status");
+      st.textContent = "导出 3MF...";
+      try {
+        const mem = inst.wasmMemory;
+        const data = parseBinaryMeshView(mem, lastMeshPtr);
+        const usedIndices = new Set(); for (let fi = 0; fi < data.nf; fi++) usedIndices.add(data.ci[fi]);
+        const hexToId = new Map(); let nextId = 1;
+        const ids = new Int32Array(data.nc);
+        for (let i = 0; i < data.nc; i++) ids[i] = i;
+        const idsPtr = inst._malloc(data.nc * 4);
+        new Int32Array(mem.buffer, idsPtr, data.nc).set(ids);
+        inst._openscad_export_3mf_v3(lastMeshPtr, lastMeshSize, idsPtr, data.nc);
+        const outPtr = inst._openscad_get_3mf_output_ptr();
+        const outSize = inst._openscad_get_3mf_output_size();
+        if (outPtr > 0 && outSize > 0) {
+          const blob = new Blob([mem.buffer.slice(outPtr, outPtr + outSize)], { type: "model/3mf" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a"); a.href = url; a.download = "model.3mf"; a.click();
+          URL.revokeObjectURL(url);
+          inst._openscad_free_3mf_output();
+          st.textContent = "导出完成 · " + (outSize / 1024).toFixed(1) + " KB";
+        } else {
+          st.textContent = "导出失败：无输出";
+        }
+        inst._free(idsPtr);
+      } catch (e) {
+        st.textContent = "导出失败: " + e;
+      }
+    };
+
+    // ---------- OFF fallback ----------
+    function parseOffToPoly(content) {
+      const lines = content.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#'));
+      let cur = lines[0] === 'OFF' ? 1 : lines[0].startsWith('OFF') ? 0 : 0;
+      if (cur === 0 && lines[0] !== 'OFF' && !lines[0].startsWith('OFF')) cur = 1;
+      else if (lines[0].startsWith('OFF')) cur = 1;
+      const [nv, nf] = lines[cur].split(/\s+/).map(Number); cur++;
+      const verts = []; for (let i = 0; i < nv; i++, cur++) { const p = lines[cur].split(/\s+/).map(Number); verts.push({ x: p[0], y: p[1], z: p[2] }) }
+      const colors = [], colorMap = new Map(), faces = [];
+      for (let i = 0; i < nf; i++, cur++) {
+        const p = lines[cur].split(/\s+/).map(Number), n = p[0], vs = p.slice(1, n + 1);
+        let col = [0xF9 / 255, 0xD7 / 255, 0x2C / 255, 1]; if (p.length >= n + 4) col = p.slice(n + 1, n + 5).map(c => c / 255);
+        const key = col.join(','); if (!colorMap.has(key)) { colorMap.set(key, colors.length); colors.push(col) }
+        const ci = colorMap.get(key); for (let j = 1; j < vs.length - 1; j++)faces.push({ vertices: [vs[0], vs[j], vs[j + 1]], colorIndex: ci })
+      }
+      return { vertices: verts, faces, colors };
     }
-    inst._free(idsPtr);
-  } catch (e) {
-    st.textContent = "导出失败: " + e;
-  }
-};
+    function buildBinaryMeshBuffer(poly) {
+      const { vertices, faces, colors } = poly; const fp = [], fi = [], fci = [];
+      for (const f of faces) { const b = fp.length / 3; for (const vi of f.vertices) fp.push(vertices[vi].x, vertices[vi].y, vertices[vi].z); fi.push(b, b + 1, b + 2); fci.push(f.colorIndex) }
+      const nv2 = fp.length / 3, nf2 = fci.length, ni2 = fi.length, nc2 = colors.length, sz = 16 + nv2 * 12 + ni2 * 4 + nf2 * 4 + nc2 * 16, buf = new ArrayBuffer(sz), v = new DataView(buf);
+      v.setUint32(0, nv2, true); v.setUint32(4, nf2, true); v.setUint32(8, nc2, true); v.setUint32(12, ni2, true); let off = 16;
+      (new Float32Array(buf, off, nv2 * 3)).set(fp); off += nv2 * 12; (new Uint32Array(buf, off, ni2)).set(fi); off += ni2 * 4; (new Int32Array(buf, off, nf2)).set(fci); off += nf2 * 4;
+      const ca = new Float32Array(buf, off, nc2 * 4); for (let i = 0; i < nc2; i++) { ca[i * 4] = colors[i][0]; ca[i * 4 + 1] = colors[i][1]; ca[i * 4 + 2] = colors[i][2]; ca[i * 4 + 3] = colors[i][3] || 1 }
+      return buf;
+    }
 
-// ---------- OFF fallback ----------
-function parseOffToPoly(content) {
-  const lines = content.split('\n').map(l=>l.trim()).filter(l=>l&&!l.startsWith('#'));
-  let cur = lines[0]==='OFF'?1:lines[0].startsWith('OFF')?0:0;
-  if (cur===0 && lines[0]!=='OFF' && !lines[0].startsWith('OFF')) cur=1;
-  else if (lines[0].startsWith('OFF')) cur=1;
-  const [nv,nf]=lines[cur].split(/\s+/).map(Number); cur++;
-  const verts=[]; for(let i=0;i<nv;i++,cur++){const p=lines[cur].split(/\s+/).map(Number);verts.push({x:p[0],y:p[1],z:p[2]})}
-  const colors=[],colorMap=new Map(),faces=[];
-  for(let i=0;i<nf;i++,cur++){const p=lines[cur].split(/\s+/).map(Number),n=p[0],vs=p.slice(1,n+1);
-    let col=[0xF9/255,0xD7/255,0x2C/255,1];if(p.length>=n+4)col=p.slice(n+1,n+5).map(c=>c/255);
-    const key=col.join(',');if(!colorMap.has(key)){colorMap.set(key,colors.length);colors.push(col)}
-    const ci=colorMap.get(key);for(let j=1;j<vs.length-1;j++)faces.push({vertices:[vs[0],vs[j],vs[j+1]],colorIndex:ci})}
-  return {vertices:verts,faces,colors};
-}
-function buildBinaryMeshBuffer(poly){const{vertices,faces,colors}=poly;const fp=[],fi=[],fci=[];
-  for(const f of faces){const b=fp.length/3;for(const vi of f.vertices)fp.push(vertices[vi].x,vertices[vi].y,vertices[vi].z);fi.push(b,b+1,b+2);fci.push(f.colorIndex)}
-  const nv2=fp.length/3,nf2=fci.length,ni2=fi.length,nc2=colors.length,sz=16+nv2*12+ni2*4+nf2*4+nc2*16,buf=new ArrayBuffer(sz),v=new DataView(buf);
-  v.setUint32(0,nv2,true);v.setUint32(4,nf2,true);v.setUint32(8,nc2,true);v.setUint32(12,ni2,true);let off=16;
-  (new Float32Array(buf,off,nv2*3)).set(fp);off+=nv2*12;(new Uint32Array(buf,off,ni2)).set(fi);off+=ni2*4;(new Int32Array(buf,off,nf2)).set(fci);off+=nf2*4;
-  const ca=new Float32Array(buf,off,nc2*4);for(let i=0;i<nc2;i++){ca[i*4]=colors[i][0];ca[i*4+1]=colors[i][1];ca[i*4+2]=colors[i][2];ca[i*4+3]=colors[i][3]||1}
-  return buf;
-}
-
-initWasm();
-</script>
+    initWasm();
+  </script>
 </body>
+
 </html>
