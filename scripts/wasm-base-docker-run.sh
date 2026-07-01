@@ -36,10 +36,12 @@ echo "
   -t openscad-wasm-ccache:local \
   -f - .
 
-docker run --rm -it \
+docker run --rm -i \
+  -u $(id -u):$(id -g) \
+  -e HOME=/tmp \
   --platform=linux/amd64 \
   -w /src \
   -v "$PWD:/src:rw" \
-  -v $CCACHE_DIR:/root/.ccache:rw \
+  -v $CCACHE_DIR:/tmp/.ccache:rw \
   openscad-wasm-ccache:local \
   "$@"
