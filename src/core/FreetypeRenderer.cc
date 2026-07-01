@@ -429,7 +429,7 @@ FreetypeRenderer::ShapeResults::ShapeResults(const FreetypeRenderer::Params& par
   for (unsigned int idx = 0; idx < glyph_count; ++idx) {
     FT_Error error;
     FT_UInt glyph_index = glyph_info[idx].codepoint;
-    error = FT_Load_Glyph(face->face_, glyph_index, FT_LOAD_DEFAULT);
+    error = FT_Load_Glyph(face->face_, glyph_index, FT_LOAD_NO_AUTOHINT);
     if (error) {
       LOG(message_group::Warning, params.loc, params.documentPath,
           "Could not load glyph %1$u"

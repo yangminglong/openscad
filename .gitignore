@@ -1,4 +1,4 @@
-/build*
+/build
 .venv
 .uuid
 .cache/
@@ -75,7 +75,9 @@ src/*.debug
 /Testing
 .DS_Store
 /build
-/build-web
+/build-web/*
+!/build-web/openscad.js
+!/build-web/openscad.wasm
 /release
 tests/DartConfiguration.tcl
 tests/__pycache__/
