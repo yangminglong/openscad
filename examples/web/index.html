@@ -339,7 +339,7 @@ difference() {
 <fontconfig><dir>/fonts</dir><cachedir>/fonts-cache</cachedir>
 <config><rescan><int>30</int></rescan></config></fontconfig>`);
       // Liberation fonts
-      const fontFiles = ["LiberationSans-Regular.ttf", "LiberationSans-Bold.ttf", "LiberationSans-Italic.ttf", "LiberationSans-BoldItalic.ttf", "LiberationSerif-Regular.ttf", "LiberationSerif-Bold.ttf", "LiberationSerif-Italic.ttf", "LiberationSerif-BoldItalic.ttf", "LiberationMono-Regular.ttf", "LiberationMono-Bold.ttf", "LiberationMono-Italic.ttf", "LiberationMono-BoldItalic.ttf"];
+      const fontFiles = ["LiberationSans-Regular.ttf", "LiberationSans-Bold.ttf", "LiberationSans-Italic.ttf", "LiberationSans-BoldItalic.ttf", "LiberationSerif-Regular.ttf", "LiberationSerif-Bold.ttf", "LiberationSerif-Italic.ttf", "LiberationSerif-BoldItalic.ttf", "LiberationMono-Regular.ttf", "LiberationMono-Bold.ttf", "LiberationMono-Italic.ttf", "LiberationMono-BoldItalic.ttf", "ZhiMangXing-Regular.ttf", "MaShanZheng-Regular.ttf"];
       for (const fn of fontFiles) {
         try { const r = await fetch(`/fonts/${fn}`); if (r.ok) FS.writeFile(`/fonts/${fn}`, new Uint8Array(await r.arrayBuffer())); } catch (e) { }
       }
