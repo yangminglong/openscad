@@ -78,6 +78,9 @@ src/*.debug
 /build-web/*
 !/build-web/openscad.js
 !/build-web/openscad.wasm
+/build-cli/*
+/build-cli-musl/*
+!/build-cli-musl/Dockerfile
 /release
 tests/DartConfiguration.tcl
 tests/__pycache__/
@@ -113,6 +116,3 @@ package-lock.json
 node_modules/**
 
 
-# Allow built-in WASM to avoid re-download/re-compile
-!/build-web/openscad.wasm
-!/build-web/openscad.js

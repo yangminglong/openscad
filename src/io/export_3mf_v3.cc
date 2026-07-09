@@ -22,16 +22,13 @@
 
 #include <zip.h>
 
-#ifndef __EMSCRIPTEN__
-#include <QDir>
-#include <QFile>
-#include <QTemporaryFile>
-#include <QUuid>
-#else
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
-#endif
+#include <filesystem>
+#include <iomanip>
+#include <random>
+#include <sstream>
 
 #include <algorithm>
 #include <array>
@@ -282,26 +279,30 @@ static bool addStringToZip(zip_t *z, const std::string& name, const std::string&
   return true;
 }
 
-// --- UUID generator (no-Qt fallback) ---------------------------------------
+// --- UUID generator ---------------------------------------------------------
 
-#ifdef __EMSCRIPTEN__
-#include <random>
 static std::string generateUUID() {
-  static std::mt19937 rng(static_cast<unsigned>(std::time(nullptr)));
-  static std::uniform_int_distribution<int> dist(0, 15);
-  const char *hex = "0123456789abcdef";
-  // Format: 8-4-4-4-12 (standard UUID format, without braces)
-  const int groups[] = {8, 4, 4, 4, 12};
-  std::string uuid;
-  for (size_t g = 0; g < sizeof(groups) / sizeof(groups[0]); ++g) {
-    if (g > 0) uuid += '-';
-    for (int i = 0; i < groups[g]; ++i) {
-      uuid += hex[dist(rng)];
-    }
-  }
-  return uuid;
+  static std::random_device rd;
+  static std::mt19937_64 gen(rd());
+  static std::uniform_int_distribution<uint64_t> dist;
+
+  // Generate two 64-bit random values
+  uint64_t a = dist(gen);
+  uint64_t b = dist(gen);
+
+  // Set UUID version 4 (random) and variant 1 bits
+  a = (a & 0xFFFFFFFFFFFF0FFFULL) | 0x0000000000004000ULL;  // version 4
+  b = (b & 0x3FFFFFFFFFFFFFFFULL) | 0x8000000000000000ULL;  // variant 1
+
+  std::ostringstream oss;
+  oss << std::hex << std::setfill('0')
+      << std::setw(8) << ((a >> 32) & 0xFFFFFFFF)
+      << '-' << std::setw(4) << ((a >> 16) & 0xFFFF)
+      << '-' << std::setw(4) << (a & 0xFFFF)
+      << '-' << std::setw(4) << ((b >> 48) & 0xFFFF)
+      << '-' << std::setw(12) << (b & 0xFFFFFFFFFFFF);
+  return oss.str();
 }
-#endif
 
 // --- Public API ------------------------------------------------------------
 
@@ -317,13 +318,8 @@ void export_3mf_v3(const std::vector<uint8_t>& binaryMeshBuffer,
   }
 
   // 2. Generate UUIDs
-#ifdef __EMSCRIPTEN__
   std::string objectUuid = generateUUID();
   std::string buildUuid  = generateUUID();
-#else
-  std::string objectUuid = QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString();
-  std::string buildUuid  = QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString();
-#endif
 
   // 3. Build XML strings
   std::string modelXml     = buildModelXML(mesh, extruderColorsId, objectUuid, buildUuid);
@@ -332,28 +328,10 @@ void export_3mf_v3(const std::vector<uint8_t>& binaryMeshBuffer,
   std::string slic3rConfig = buildSlic3rPEConfig(extruderColorsId, mesh.colorPalette, mesh.numColors);
 
   // 4. Create zip via libzip
-#ifdef __EMSCRIPTEN__
-  // Emscripten: use MEMFS temporary file
-  std::string tmpPath = "/tmp/openscad_3mf_" + objectUuid.substr(0, 8) + ".3mf";
-#else
-  // Desktop: use QTemporaryFile
-  QTemporaryFile tmpFile;
-  tmpFile.setFileTemplate(QDir::tempPath() + "/openscad_3mf_XXXXXX.3mf");
-  if (!tmpFile.open()) {
-    LOG(message_group::Export_Error, "Failed to create temporary file for 3MF v3 export");
-    return;
-  }
-  QString tmpPath = tmpFile.fileName();
-  tmpFile.close(); // libzip will open it
-#endif
+  std::string tmpPath = (std::filesystem::temp_directory_path() / ("openscad_3mf_" + objectUuid.substr(0, 8) + ".3mf")).string();
 
   int zipError = 0;
-#ifdef __EMSCRIPTEN__
   zip_t *z = zip_open(tmpPath.c_str(), ZIP_CREATE | ZIP_TRUNCATE, &zipError);
-#else
-  zip_t *z = zip_open(tmpPath.toUtf8().constData(),
-                      ZIP_CREATE | ZIP_TRUNCATE, &zipError);
-#endif
   if (!z) {
     LOG(message_group::Export_Error, "Failed to create zip archive for 3MF v3 export");
     return;
@@ -373,11 +351,9 @@ void export_3mf_v3(const std::vector<uint8_t>& binaryMeshBuffer,
   }
 
   // 5. Read back and write to ostream
-#ifdef __EMSCRIPTEN__
-  // Standard C FILE I/O on Emscripten MEMFS
   FILE *fp = fopen(tmpPath.c_str(), "rb");
   if (!fp) {
-    LOG(message_group::Export_Error, "Failed to read back 3MF file from MEMFS");
+    LOG(message_group::Export_Error, "Failed to read back 3MF file");
     return;
   }
   fseek(fp, 0, SEEK_END);
@@ -387,18 +363,8 @@ void export_3mf_v3(const std::vector<uint8_t>& binaryMeshBuffer,
   fread(buf.data(), 1, sz, fp);
   fclose(fp);
   output.write(buf.data(), sz);
-  // Clean up MEMFS temp file
+  // Clean up temp file
   std::remove(tmpPath.c_str());
-#else
-  QFile f(tmpPath);
-  if (!f.open(QIODevice::ReadOnly)) {
-    LOG(message_group::Export_Error, "Failed to read temporary 3MF file");
-    return;
-  }
-  QByteArray data = f.readAll();
-  f.close();
-  output.write(data.constData(), data.size());
-#endif
 }
 
 #else  // !ENABLE_LIBZIP
