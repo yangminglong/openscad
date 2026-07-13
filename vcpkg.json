@@ -4,6 +4,9 @@
   "dependencies": [
     "boost-regex",
     "boost-program-options",
+    "boost-dll",
+    "boost-assign",
+    "boost-nowide",
     "eigen3",
     "cgal",
     "cairo",
@@ -16,6 +19,8 @@
     "glib",
     "gperf",
     "qscintilla",
+    "qt5compat",
+    "qtmultimedia",
     "tbb"
   ]
 }
