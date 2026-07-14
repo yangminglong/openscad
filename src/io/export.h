@@ -314,6 +314,7 @@ void export_3mf(const std::shared_ptr<const Geometry>& geom, std::ostream& outpu
                 const ExportInfo& exportInfo);
 void export_3mf_v3(const std::vector<uint8_t>& binaryMeshBuffer,
                    const std::vector<int>& extruderColorsId,
+                   const std::vector<std::string>& filamentSettingsIds,
                    std::ostream& output);
 void export_obj(const std::shared_ptr<const Geometry>& geom, std::ostream& output);
 void export_off(const std::shared_ptr<const Geometry>& geom, std::ostream& output);

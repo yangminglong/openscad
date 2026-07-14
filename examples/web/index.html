@@ -407,7 +407,16 @@ difference() {
         for (let i = 0; i < data.nc; i++) ids[i] = i;
         const idsPtr = inst._malloc(data.nc * 4);
         new Int32Array(mem.buffer, idsPtr, data.nc).set(ids);
-        inst._openscad_export_3mf_v3(lastMeshPtr, lastMeshSize, idsPtr, data.nc);
+        // Build filament settings IDs (newline-separated; one per color)
+        // Override individual entries to set per-extruder filament names
+        const filamentNames = new Array(data.nc).fill("Anycubic ABS");
+        const filamentStr = filamentNames.join("\n");
+        const filamentBytes = new TextEncoder().encode(filamentStr);
+        const filamentPtr = inst._malloc(filamentBytes.length + 1);
+        new Uint8Array(mem.buffer, filamentPtr, filamentBytes.length + 1).set(
+          new Uint8Array([...filamentBytes, 0]) // null-terminated
+        );
+        inst._openscad_export_3mf_v3(lastMeshPtr, lastMeshSize, idsPtr, data.nc, filamentPtr);
         const outPtr = inst._openscad_get_3mf_output_ptr();
         const outSize = inst._openscad_get_3mf_output_size();
         if (outPtr > 0 && outSize > 0) {
@@ -421,6 +430,7 @@ difference() {
           st.textContent = "导出失败：无输出";
         }
         inst._free(idsPtr);
+        inst._free(filamentPtr);
       } catch (e) {
         st.textContent = "导出失败: " + e;
       }

@@ -12,7 +12,8 @@ extern "C" {
 
   // PrusaSlicer 3MF v3 export (with MMU segmentation)
   void openscad_export_3mf_v3(const uint8_t* binaryMeshData, uint32_t binaryMeshSize,
-                            const int32_t* extruderColorsId, uint32_t count);
+                            const int32_t* extruderColorsId, uint32_t count,
+                            const char* filamentSettingsIds);
   uint8_t* openscad_get_3mf_output_ptr();
   uint32_t openscad_get_3mf_output_size();
   void openscad_free_3mf_output();

@@ -13,6 +13,7 @@
 #include "geometry/PolySet.h"
 #include "geometry/linalg.h"
 #include "geometry/manifold/ManifoldGeometry.h"
+#include "glview/ColorMap.h"
 #include "utils/printutils.h"
 
 // Static buffer for storing the binary mesh export result.
@@ -37,12 +38,22 @@ void openscad_free_binary_mesh() {
 }
 
 void openscad_export_3mf_v3(const uint8_t* binaryMeshData, uint32_t binaryMeshSize,
-                            const int32_t* extruderColorsId, uint32_t count) {
+                            const int32_t* extruderColorsId, uint32_t count,
+                            const char* filamentSettingsIds) {
   _3mfOutputBuffer.clear();
   std::ostringstream oss;
   std::vector<uint8_t> meshData(binaryMeshData, binaryMeshData + binaryMeshSize);
   std::vector<int> ids(extruderColorsId, extruderColorsId + count);
-  export_3mf_v3(meshData, ids, oss);
+  // Split newline-separated filament settings IDs
+  std::vector<std::string> filamentIds;
+  if (filamentSettingsIds && filamentSettingsIds[0] != '\0') {
+    std::istringstream iss(filamentSettingsIds);
+    std::string line;
+    while (std::getline(iss, line, '\n')) {
+      if (!line.empty()) filamentIds.push_back(line);
+    }
+  }
+  export_3mf_v3(meshData, ids, filamentIds, oss);
   std::string result = oss.str();
   _3mfOutputBuffer.assign(result.begin(), result.end());
 }
@@ -185,8 +196,10 @@ void export_binary_mesh_to_static_buffer(const std::shared_ptr<const Geometry>& 
   collectGeometry(collector, geom);
 
   if (collector.palette.size() == 0) {
-    // Ensure default yellow/gold color at palette index 0
-    getOrInsertColor(collector, Color4f(0.98f, 0.74f, 0.15f, 1.0f));
+    // Ensure default color from render color scheme at palette index 0
+    getOrInsertColor(collector, ColorMap::getColor(
+        ColorMap::instance().defaultColorScheme(),
+        RenderColor::CGAL_FACE_FRONT_COLOR));
   }
 
   uint32_t numVertices = static_cast<uint32_t>(collector.positions.size() / 3);

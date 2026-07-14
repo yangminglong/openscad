@@ -238,7 +238,8 @@ static std::string buildRelsXML() {
 
 static std::string buildSlic3rPEConfig(const std::vector<int>& extruderColorsId,
                                        const float *colorPalette,
-                                       uint32_t numColors) {
+                                       uint32_t numColors,
+                                       const std::vector<std::string>& filamentSettingsIds) {
   // Collect unique extruder IDs with their colors
   std::map<int, std::string> idToColor;
   for (uint32_t i = 0; i < numColors; ++i) {
@@ -263,6 +264,24 @@ static std::string buildSlic3rPEConfig(const std::vector<int>& extruderColorsId,
     first = false;
   }
   cfg << "\n";
+
+  // Filament settings IDs (one per extruder, in extruder ID order)
+  if (!filamentSettingsIds.empty()) {
+    cfg << "; filament_settings_id = ";
+    first = true;
+    for (const auto& [id, hex] : idToColor) {
+      if (!first) cfg << ";";
+      int extruderId = id;
+      if (extruderId >= 0 && static_cast<size_t>(extruderId) < filamentSettingsIds.size()) {
+        cfg << "\"" << filamentSettingsIds[extruderId] << "\"";
+      } else {
+        cfg << "\"\"";
+      }
+      first = false;
+    }
+    cfg << "\n";
+  }
+
   return cfg.str();
 }
 
@@ -308,6 +327,7 @@ static std::string generateUUID() {
 
 void export_3mf_v3(const std::vector<uint8_t>& binaryMeshBuffer,
                    const std::vector<int>& extruderColorsId,
+                   const std::vector<std::string>& filamentSettingsIds,
                    std::ostream& output)
 {
   // 1. Parse binary mesh
@@ -325,7 +345,7 @@ void export_3mf_v3(const std::vector<uint8_t>& binaryMeshBuffer,
   std::string modelXml     = buildModelXML(mesh, extruderColorsId, objectUuid, buildUuid);
   std::string contentTypes = buildContentTypesXML();
   std::string rels         = buildRelsXML();
-  std::string slic3rConfig = buildSlic3rPEConfig(extruderColorsId, mesh.colorPalette, mesh.numColors);
+  std::string slic3rConfig = buildSlic3rPEConfig(extruderColorsId, mesh.colorPalette, mesh.numColors, filamentSettingsIds);
 
   // 4. Create zip via libzip
   std::string tmpPath = (std::filesystem::temp_directory_path() / ("openscad_3mf_" + objectUuid.substr(0, 8) + ".3mf")).string();
@@ -371,6 +391,7 @@ void export_3mf_v3(const std::vector<uint8_t>& binaryMeshBuffer,
 
 void export_3mf_v3(const std::vector<uint8_t>&,
                    const std::vector<int>&,
+                   const std::vector<std::string>&,
                    std::ostream&)
 {
   LOG(message_group::Export_Error,
