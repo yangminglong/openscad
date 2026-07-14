@@ -164,6 +164,141 @@
         transform: rotate(360deg)
       }
     }
+
+    /* ---------- Filament Config Modal ---------- */
+    #filament-modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, .6);
+      z-index: 100;
+      align-items: center;
+      justify-content: center
+    }
+
+    #filament-modal-overlay.show {
+      display: flex
+    }
+
+    #filament-modal {
+      background: #1e1e2e;
+      border: 1px solid #45475a;
+      border-radius: 12px;
+      padding: 24px;
+      min-width: 520px;
+      max-width: 640px;
+      max-height: 80vh;
+      overflow-y: auto;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, .5)
+    }
+
+    #filament-modal h3 {
+      margin: 0 0 8px;
+      font-size: 16px;
+      color: #cdd6f4
+    }
+
+    #filament-modal .desc {
+      font-size: 12px;
+      color: #a6adc8;
+      margin-bottom: 16px;
+      line-height: 1.6
+    }
+
+    #filament-modal .row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 0;
+      border-bottom: 1px solid #313244
+    }
+
+    #filament-modal .swatch {
+      width: 24px;
+      height: 24px;
+      border-radius: 4px;
+      border: 1px solid #585b70;
+      flex-shrink: 0
+    }
+
+    #filament-modal .hex {
+      font-family: monospace;
+      font-size: 12px;
+      color: #bac2de;
+      min-width: 68px
+    }
+
+    #filament-modal .id-tag {
+      font-size: 11px;
+      background: #45475a;
+      color: #cdd6f4;
+      padding: 2px 8px;
+      border-radius: 4px;
+      white-space: nowrap
+    }
+
+    #filament-modal select {
+      padding: 6px 10px;
+      border-radius: 6px;
+      border: 1px solid #585b70;
+      background: #313244;
+      color: #cdd6f4;
+      font-size: 13px;
+      cursor: pointer;
+      min-width: 160px
+    }
+
+    #filament-modal .btn-sm {
+      padding: 4px 10px;
+      border: 1px solid #585b70;
+      border-radius: 4px;
+      background: #313244;
+      color: #cdd6f4;
+      cursor: pointer;
+      font-size: 12px
+    }
+
+    #filament-modal .btn-sm:disabled {
+      opacity: .3;
+      cursor: not-allowed
+    }
+
+    #filament-modal .btn-sm:hover:not(:disabled) {
+      background: #45475a
+    }
+
+    #filament-modal .modal-footer {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+      margin-top: 16px;
+      padding-top: 12px;
+      border-top: 1px solid #45475a
+    }
+
+    #filament-modal .modal-footer .btn {
+      padding: 8px 20px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500
+    }
+
+    .btn-cancel {
+      background: #45475a;
+      color: #cdd6f4
+    }
+
+    .btn-save {
+      background: #cba6f7;
+      color: #1e1e2e
+    }
+
+    .btn-filament {
+      background: #f5c2e7;
+      color: #1e1e2e
+    }
   </style>
 </head>
 
@@ -182,6 +317,7 @@ difference() {
     <div id="buttons">
       <button class="btn btn-run" id="btn-run" disabled>渲染</button>
       <button class="btn btn-export" id="btn-export" disabled>导出 3MF</button>
+      <button class="btn btn-filament" id="btn-filament" disabled style="display:none">配置耗材</button>
       <span id="status">加载 WASM 中...</span>
     </div>
   </div>
@@ -192,6 +328,21 @@ difference() {
     </div>
     <div id="legend"></div>
     <div id="info">未加载</div>
+  </div>
+
+  <!-- Filament Config Modal -->
+  <div id="filament-modal-overlay">
+    <div id="filament-modal">
+      <h3>配置耗材</h3>
+      <div class="desc">
+        每个颜色对应一个挤出机。调整顺序可改变挤出顺序，选择耗材类型可写入 3MF 供切片软件识别。
+      </div>
+      <div id="filament-rows"></div>
+      <div class="modal-footer">
+        <button class="btn btn-cancel" id="btn-filament-cancel">取消</button>
+        <button class="btn btn-save" id="btn-filament-save">保存</button>
+      </div>
+    </div>
   </div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
@@ -286,6 +437,12 @@ difference() {
     let lastMeshPtr = 0, lastMeshSize = 0;
     let lastPalette = null; // Float32Array view into WASM memory
 
+    // ---------- Filament config state ----------
+    let extruderColorsId = [];         // palette-index → extruder-ID
+    let filamentSettingsIds = {};      // extruder-ID → filament name
+    const FILAMENT_OPTIONS = ['Anycubic ABS', 'Anycubic PETG', 'Anycubic PLA'];
+    const DEFAULT_FILAMENT = 'Anycubic PLA';
+
     async function initWasm() {
       try {
         wasmInst = await OpenSCAD({
@@ -370,6 +527,11 @@ difference() {
           const data = parseBinaryMeshView(mem, ptr);
           lastMeshPtr = ptr; lastMeshSize = size;
           lastPalette = data.pal; // keep reference for 3MF export
+          // Init extruder IDs (identity mapping: each palette index = extruder)
+          extruderColorsId = Array.from({ length: data.nc }, (_, i) => i);
+          document.getElementById('btn-filament').style.display = data.nc > 0 ? '' : 'none';
+          document.getElementById('btn-filament').disabled = false;
+          document.getElementById('btn-filament').onclick = openFilamentDialog;
           buildScene(data);
           st.textContent = `完成 · ${(size / 1024).toFixed(1)} KB (零拷贝)`;
           el.classList.remove('show'); btn.disabled = false; return;
@@ -389,6 +551,97 @@ difference() {
       el.classList.remove('show'); btn.disabled = false;
     };
 
+    // ---------- Filament Config Dialog ----------
+    function openFilamentDialog() {
+      if (!lastPalette) return;
+      const nc = lastPalette.length / 4;
+      if (nc === 0) return;
+
+      // Build rows HTML from current state
+      const idToInfo = new Map();
+      for (let i = 0; i < nc; i++) {
+        const id = extruderColorsId[i] ?? i;
+        if (!idToInfo.has(id)) {
+          const r = Math.round(lastPalette[i * 4] * 255).toString(16).padStart(2, '0');
+          const g = Math.round(lastPalette[i * 4 + 1] * 255).toString(16).padStart(2, '0');
+          const b = Math.round(lastPalette[i * 4 + 2] * 255).toString(16).padStart(2, '0');
+          idToInfo.set(id, { hex: '#' + r + g + b });
+        }
+      }
+      const sortedIds = [...idToInfo.keys()].sort((a, b) => a - b);
+
+      const container = document.getElementById('filament-rows');
+      container.innerHTML = sortedIds.map((extruderId, pos) => {
+        const info = idToInfo.get(extruderId);
+        const isFirst = pos === 0;
+        const isLast = pos === sortedIds.length - 1;
+        const filament = filamentSettingsIds[extruderId] ?? DEFAULT_FILAMENT;
+        const opts = FILAMENT_OPTIONS.map(o =>
+          `<option value="${o}" ${o === filament ? 'selected' : ''}>${o}</option>`
+        ).join('');
+        return `<div class="row" data-extruder-id="${extruderId}">
+          <div class="swatch" style="background:${info.hex}"></div>
+          <span class="hex">${info.hex}</span>
+          <span class="id-tag">挤出机 ${extruderId + 1}</span>
+          <select data-extruder-id="${extruderId}">${opts}</select>
+          <button class="btn-sm" data-action="up" ${isFirst ? 'disabled' : ''}>↑</button>
+          <button class="btn-sm" data-action="down" ${isLast ? 'disabled' : ''}>↓</button>
+        </div>`;
+      }).join('');
+
+      // Bind events
+      container.querySelectorAll('select').forEach(sel => {
+        sel.onchange = () => {
+          const eid = parseInt(sel.dataset.extruderId);
+          filamentSettingsIds[eid] = sel.value;
+        };
+      });
+      container.querySelectorAll('[data-action="up"]').forEach(btn => {
+        btn.onclick = () => moveExtruder(parseInt(btn.parentElement.dataset.extruderId), -1);
+      });
+      container.querySelectorAll('[data-action="down"]').forEach(btn => {
+        btn.onclick = () => moveExtruder(parseInt(btn.parentElement.dataset.extruderId), +1);
+      });
+
+      document.getElementById('filament-modal-overlay').classList.add('show');
+    }
+
+    function moveExtruder(fromId, delta) {
+      const toId = fromId + delta;
+      if (toId < 0) return;
+      extruderColorsId = extruderColorsId.map(id =>
+        id === fromId ? toId : id === toId ? fromId : id
+      );
+      // Swap filament settings to follow the extruder IDs
+      const tmp = filamentSettingsIds[fromId];
+      filamentSettingsIds[fromId] = filamentSettingsIds[toId];
+      filamentSettingsIds[toId] = tmp;
+      openFilamentDialog(); // re-render
+    }
+
+    function closeFilamentDialog(save) {
+      if (!save) {
+        // Revert to last saved state
+        for (const id in filamentSettingsIds) {
+          // keep only what's been explicitly set
+        }
+      }
+      document.getElementById('filament-modal-overlay').classList.remove('show');
+    }
+
+    document.getElementById('btn-filament-cancel').onclick = () => closeFilamentDialog(false);
+    document.getElementById('btn-filament-save').onclick = () => {
+      // Persist filament selections from current select elements
+      const container = document.getElementById('filament-rows');
+      container.querySelectorAll('select').forEach(sel => {
+        const eid = parseInt(sel.dataset.extruderId);
+        filamentSettingsIds[eid] = sel.value;
+      });
+      closeFilamentDialog(true);
+      document.getElementById('status').textContent =
+        `已保存 ${Object.keys(filamentSettingsIds).length} 个挤出机耗材配置`;
+    };
+
     // ---------- Export 3MF (calls C++ export_3mf_v3) ----------
     window.export3mf = async function () {
       const inst = wasmInst; if (!inst) return;
@@ -401,15 +654,13 @@ difference() {
       try {
         const mem = inst.wasmMemory;
         const data = parseBinaryMeshView(mem, lastMeshPtr);
-        const usedIndices = new Set(); for (let fi = 0; fi < data.nf; fi++) usedIndices.add(data.ci[fi]);
-        const hexToId = new Map(); let nextId = 1;
         const ids = new Int32Array(data.nc);
-        for (let i = 0; i < data.nc; i++) ids[i] = i;
+        for (let i = 0; i < data.nc; i++) ids[i] = extruderColorsId[i] ?? i;
         const idsPtr = inst._malloc(data.nc * 4);
         new Int32Array(mem.buffer, idsPtr, data.nc).set(ids);
-        // Build filament settings IDs (newline-separated; one per color)
-        // Override individual entries to set per-extruder filament names
-        const filamentNames = new Array(data.nc).fill("Anycubic ABS");
+        // Build filament settings from configured extruder IDs
+        const sortedExtruderIds = [...new Set(extruderColorsId)].sort((a, b) => a - b);
+        const filamentNames = sortedExtruderIds.map(id => filamentSettingsIds[id] ?? DEFAULT_FILAMENT);
         const filamentStr = filamentNames.join("\n");
         const filamentBytes = new TextEncoder().encode(filamentStr);
         const filamentPtr = inst._malloc(filamentBytes.length + 1);
