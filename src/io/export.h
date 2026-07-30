@@ -309,12 +309,39 @@ bool exportFileByName(const std::shared_ptr<const class Geometry>& root_geom,
 bool exportFileStdOut(const std::shared_ptr<const class Geometry>& root_geom,
                       const ExportInfo& exportInfo);
 
+// 耗材颜色类型
+enum class FilamentColorType {
+    Solid = 0,    // 纯色
+    Gradient = 1, // 渐变色
+    Glow = 2      // 夜光色
+};
+
+// RGBA 颜色
+struct FilamentColorRGBA {
+    uint8_t R = 0, G = 0, B = 0, A = 255;
+    std::string toHex() const;                        // → "#RRGGBBAA"
+    static FilamentColorRGBA fromHex(const std::string& hex);  // "#RRGGBBAA" →
+};
+
+// 耗材颜色描述 — 用于 export_3mf_v3
+struct FilamentColor {
+    std::string name;                           // 耗材名 (如 "PLA")
+    FilamentColorType type = FilamentColorType::Solid;
+    std::vector<FilamentColorRGBA> colors;       // 纯色1个, 渐变色2个, 夜光色2个
+    int angle = 0;                               // 渐变角度 (0=竖直, 90=水平)
+
+    std::string serialize() const;                              // → "gradient:#RRGGBB,...;angle:0"
+    static FilamentColor deserialize(const std::string& str);   // ← 同上格式
+};
+
 void export_stl(const std::shared_ptr<const Geometry>& geom, std::ostream& output, bool binary = true);
 void export_3mf(const std::shared_ptr<const Geometry>& geom, std::ostream& output,
                 const ExportInfo& exportInfo);
 void export_3mf_v3(const std::vector<uint8_t>& binaryMeshBuffer,
-                   const std::vector<int>& extruderColorsId,
-                   const std::vector<std::string>& filamentSettingsIds,
+                   const std::vector<FilamentColor>& infos,
+                   std::ostream& output);
+void export_3mf_v4(const std::vector<uint8_t>& binaryMeshBuffer,
+                   const std::vector<FilamentColor>& infos,
                    std::ostream& output);
 void export_obj(const std::shared_ptr<const Geometry>& geom, std::ostream& output);
 void export_off(const std::shared_ptr<const Geometry>& geom, std::ostream& output);

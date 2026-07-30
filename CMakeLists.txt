@@ -731,6 +731,7 @@ if (Lib3MF_FOUND)
   target_link_libraries(OpenSCADLibInternal PUBLIC Lib3MF::Lib3MF)
   target_compile_definitions(OpenSCADLibInternal PUBLIC ENABLE_LIB3MF)
   set(LIB3MF_V3_SOURCES src/io/export_3mf_v3.cc)
+  set(LIB3MF_V4_SOURCES src/io/export_3mf_v4.cc)
   if (Lib3MF_VERSION VERSION_GREATER_EQUAL 2)
     set(LIB3MF_SOURCES src/io/export_3mf_v2.cc src/io/import_3mf_v2.cc)
   else()
@@ -738,6 +739,7 @@ if (Lib3MF_FOUND)
   endif()
 else()
   set(LIB3MF_V3_SOURCES src/io/export_3mf_v3.cc)
+  set(LIB3MF_V4_SOURCES src/io/export_3mf_v4.cc)
   set(LIB3MF_SOURCES src/io/export_3mf_dummy.cc src/io/import_3mf_dummy.cc)
   message(STATUS "lib3mf: disabled (not found)")
 endif()
@@ -1115,6 +1117,7 @@ set(CORE_SOURCES
   src/utils/version_check.h
   ${LIB3MF_SOURCES}
 	  ${LIB3MF_V3_SOURCES}
+	  ${LIB3MF_V4_SOURCES}
   ${PLATFORM_SOURCES}
   ${FLEX_openscad_lexer_OUTPUTS}
   ${BISON_openscad_parser_OUTPUTS}

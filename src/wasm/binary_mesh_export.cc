@@ -38,22 +38,34 @@ void openscad_free_binary_mesh() {
 }
 
 void openscad_export_3mf_v3(const uint8_t* binaryMeshData, uint32_t binaryMeshSize,
-                            const int32_t* extruderColorsId, uint32_t count,
-                            const char* filamentSettingsIds) {
+                            const char* filamentInfos) {
   _3mfOutputBuffer.clear();
   std::ostringstream oss;
   std::vector<uint8_t> meshData(binaryMeshData, binaryMeshData + binaryMeshSize);
-  std::vector<int> ids(extruderColorsId, extruderColorsId + count);
-  // Split newline-separated filament settings IDs
-  std::vector<std::string> filamentIds;
-  if (filamentSettingsIds && filamentSettingsIds[0] != '\0') {
-    std::istringstream iss(filamentSettingsIds);
+
+  // 解析换行分隔的耗材规格 → vector<FilamentColor>
+  // 格式: 每行 "name|serialize_format"
+  //   "PLA|#FF0000FF"
+  //   "PLA Silk|gradient:#FF0000FF,#00FF00FF;angle:0"
+  std::vector<FilamentColor> infos;
+  if (filamentInfos && filamentInfos[0] != '\0') {
+    std::istringstream iss(filamentInfos);
     std::string line;
     while (std::getline(iss, line, '\n')) {
-      if (!line.empty()) filamentIds.push_back(line);
+      if (line.empty()) continue;
+      FilamentColor fc;
+      size_t pipe = line.find('|');
+      if (pipe != std::string::npos) {
+        fc.name = line.substr(0, pipe);
+        fc = FilamentColor::deserialize(line.substr(pipe + 1));
+        fc.name = line.substr(0, pipe);  // restore name (deserialize 不设 name)
+      } else {
+        fc = FilamentColor::deserialize(line);
+      }
+      infos.push_back(fc);
     }
   }
-  export_3mf_v3(meshData, ids, filamentIds, oss);
+  export_3mf_v4(meshData, infos, oss);
   std::string result = oss.str();
   _3mfOutputBuffer.assign(result.begin(), result.end());
 }

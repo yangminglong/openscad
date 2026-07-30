@@ -299,6 +299,35 @@
       background: #f5c2e7;
       color: #1e1e2e
     }
+
+    /* 自定义下拉 */
+    .fselect { position: relative; min-width: 200px; cursor: pointer; }
+    .fselect-trigger {
+      display: flex; align-items: center; gap: 8px;
+      background: #313244; border: 1px solid #45475a; border-radius: 6px;
+      padding: 6px 10px; font-size: 13px; color: #cdd6f4;
+    }
+    .fselect-trigger:hover { border-color: #89b4fa; }
+    .fselect-drop {
+      display: none; position: absolute; top: 100%; left: 0; right: 0; z-index: 100;
+      background: #313244; border: 1px solid #45475a; border-radius: 0 0 6px 6px;
+      max-height: 240px; overflow-y: auto;
+    }
+    .fselect-drop.open { display: block; }
+    .fopt {
+      display: flex; align-items: center; gap: 8px;
+      padding: 5px 10px; font-size: 12px; color: #cdd6f4; cursor: pointer;
+    }
+    .fopt:hover { background: #45475a; }
+    .fopt-swatch {
+      display: inline-block; width: 14px; height: 14px; border-radius: 3px;
+      border: 1px solid #585b70; flex-shrink: 0;
+    }
+    .fopt-swatch.gradient { border-radius: 3px; }
+    .fopt-swatch.glow {
+      border-radius: 3px;
+      background: linear-gradient(90deg, var(--gc1, #888) 50%, var(--gc2, #444) 50%);
+    }
   </style>
 </head>
 
@@ -439,9 +468,28 @@ difference() {
 
     // ---------- Filament config state ----------
     let extruderColorsId = [];         // palette-index → extruder-ID
-    let filamentSettingsIds = {};      // extruder-ID → filament name
-    const FILAMENT_OPTIONS = ['Anycubic ABS', 'Anycubic PETG', 'Anycubic PLA'];
-    const DEFAULT_FILAMENT = 'Anycubic PLA';
+    let filamentSettingsIds = {};      // extruder-ID → filament index
+    let filamentDB = [];               // loaded from filaments.json
+    let FILAMENT_OPTIONS = [];         // display names
+    const DEFAULT_FILAMENT_IDX = 0;
+
+    // 加载 filaments.json
+    (async function loadFilaments() {
+      try {
+        const resp = await fetch('resources/filaments.json');
+        const data = await resp.json();
+        filamentDB = data.filaments || [];
+        FILAMENT_OPTIONS = filamentDB.map(f => f.Content);
+        // 默认第一个
+        for (let i = 0; i < extruderColorsId.length; i++) {
+          filamentSettingsIds[i] = filamentSettingsIds[i] ?? DEFAULT_FILAMENT_IDX;
+        }
+      } catch (e) {
+        // 回退
+        filamentDB = [{ Content: 'Anycubic PLA', Name: 'PLA', Type: 'Solid', Colors: ['#FF0000FF'] }];
+        FILAMENT_OPTIONS = filamentDB.map(f => f.Content);
+      }
+    })();
 
     async function initWasm() {
       try {
@@ -575,27 +623,79 @@ difference() {
         const info = idToInfo.get(extruderId);
         const isFirst = pos === 0;
         const isLast = pos === sortedIds.length - 1;
-        const filament = filamentSettingsIds[extruderId] ?? DEFAULT_FILAMENT;
-        const opts = FILAMENT_OPTIONS.map(o =>
-          `<option value="${o}" ${o === filament ? 'selected' : ''}>${o}</option>`
-        ).join('');
+        const idx = filamentSettingsIds[extruderId] ?? DEFAULT_FILAMENT_IDX;
+        const cur = filamentDB[idx] || filamentDB[DEFAULT_FILAMENT_IDX];
+
+        // 构建色块 HTML (支持渐变/夜光)
+        function swatchHTML(f) {
+          const colors = (f.Colors || []).map(c => c.substring(0, 7));
+          if (f.Type === 'Gradient' && colors.length >= 2) {
+            const stops = colors.map((c, i) => `${c} ${Math.round(i*100/(colors.length-1))}%`).join(',');
+            return `<span class="fopt-swatch gradient" style="background:linear-gradient(90deg,${stops})"></span>`;
+          }
+          if (f.Type === 'Glow' && colors.length >= 2) {
+            return `<span class="fopt-swatch glow" style="--gc1:${colors[0]};--gc2:${colors[1]}"></span>`;
+          }
+          const c = colors[0] || '#888888';
+          return `<span class="fopt-swatch" style="background:${c}"></span>`;
+        }
+        const optsHTML = filamentDB.map((f, i) => {
+          const typeTag = f.Type === 'Gradient' ? ' ↕' : f.Type === 'Glow' ? ' ✦' : '';
+          return `<div class="fopt" data-idx="${i}" style="${i === idx ? 'background:#444' : ''}">
+            ${swatchHTML(f)}
+            ${f.Content}${typeTag}
+          </div>`;
+        }).join('');
+
         return `<div class="row" data-extruder-id="${extruderId}">
           <div class="swatch" style="background:${info.hex}"></div>
           <span class="hex">${info.hex}</span>
           <span class="id-tag">挤出机 ${extruderId + 1}</span>
-          <select data-extruder-id="${extruderId}">${opts}</select>
+          <div class="fselect" data-extruder-id="${extruderId}">
+            <div class="fselect-trigger">
+              ${swatchHTML(cur)}
+              ${cur.Content}
+            </div>
+            <div class="fselect-drop">${optsHTML}</div>
+          </div>
           <button class="btn-sm" data-action="up" ${isFirst ? 'disabled' : ''}>↑</button>
           <button class="btn-sm" data-action="down" ${isLast ? 'disabled' : ''}>↓</button>
         </div>`;
       }).join('');
 
-      // Bind events
-      container.querySelectorAll('select').forEach(sel => {
-        sel.onchange = () => {
-          const eid = parseInt(sel.dataset.extruderId);
-          filamentSettingsIds[eid] = sel.value;
+      // 自定义下拉事件
+      container.querySelectorAll('.fselect').forEach(fs => {
+        const trigger = fs.querySelector('.fselect-trigger');
+        const drop = fs.querySelector('.fselect-drop');
+        const eid = parseInt(fs.dataset.extruderId);
+
+        trigger.onclick = (e) => {
+          e.stopPropagation();
+          // 关闭其他打开的
+          container.querySelectorAll('.fselect-drop.open').forEach(d => {
+            if (d !== drop) d.classList.remove('open');
+          });
+          drop.classList.toggle('open');
         };
+
+        drop.querySelectorAll('.fopt').forEach(opt => {
+          opt.onclick = (e) => {
+            e.stopPropagation();
+            const i = parseInt(opt.dataset.idx);
+            filamentSettingsIds[eid] = i;
+            openFilamentDialog(); // re-render
+          };
+        });
       });
+
+      // 点击空白关闭所有下拉
+      const closeDrops = (e) => {
+        if (!e.target.closest('.fselect')) {
+          container.querySelectorAll('.fselect-drop.open').forEach(d => d.classList.remove('open'));
+        }
+      };
+      document.removeEventListener('click', closeDrops);
+      document.addEventListener('click', closeDrops);
       container.querySelectorAll('[data-action="up"]').forEach(btn => {
         btn.onclick = () => moveExtruder(parseInt(btn.parentElement.dataset.extruderId), -1);
       });
@@ -631,18 +731,15 @@ difference() {
 
     document.getElementById('btn-filament-cancel').onclick = () => closeFilamentDialog(false);
     document.getElementById('btn-filament-save').onclick = () => {
-      // Persist filament selections from current select elements
-      const container = document.getElementById('filament-rows');
-      container.querySelectorAll('select').forEach(sel => {
-        const eid = parseInt(sel.dataset.extruderId);
-        filamentSettingsIds[eid] = sel.value;
-      });
       closeFilamentDialog(true);
       document.getElementById('status').textContent =
         `已保存 ${Object.keys(filamentSettingsIds).length} 个挤出机耗材配置`;
     };
 
     // ---------- Export 3MF (calls C++ export_3mf_v3) ----------
+    function toHex(v) {  // float 0-1 → "FF"
+      return Math.round(v * 255).toString(16).padStart(2, '0').toUpperCase();
+    }
     window.export3mf = async function () {
       const inst = wasmInst; if (!inst) return;
       if (!lastMeshPtr || !inst._openscad_export_3mf_v3) {
@@ -653,21 +750,31 @@ difference() {
       st.textContent = "导出 3MF...";
       try {
         const mem = inst.wasmMemory;
-        const data = parseBinaryMeshView(mem, lastMeshPtr);
-        const ids = new Int32Array(data.nc);
-        for (let i = 0; i < data.nc; i++) ids[i] = extruderColorsId[i] ?? i;
-        const idsPtr = inst._malloc(data.nc * 4);
-        new Int32Array(mem.buffer, idsPtr, data.nc).set(ids);
-        // Build filament settings from configured extruder IDs
-        const sortedExtruderIds = [...new Set(extruderColorsId)].sort((a, b) => a - b);
-        const filamentNames = sortedExtruderIds.map(id => filamentSettingsIds[id] ?? DEFAULT_FILAMENT);
-        const filamentStr = filamentNames.join("\n");
+        // 构建耗材规格 "name|serialize_format" (换行分隔)
+        const sortedIds = [...new Set(extruderColorsId)].sort((a, b) => a - b);
+        const specs = sortedIds.map(id => {
+          const fidx = parseInt(filamentSettingsIds[id]) ?? DEFAULT_FILAMENT_IDX;
+          const f = filamentDB[fidx] || filamentDB[DEFAULT_FILAMENT_IDX];
+          const name = f.Name || f.Content;
+          // 根据 Type 构建 serialize 格式
+          const colors = (f.Colors || []).map(c => c.length === 9 ? c : c + 'FF');
+          let info;
+          if (f.Type === 'Gradient') {
+            info = 'gradient:' + colors.join(',') + ';angle:' + (f.Angle || 0);
+          } else if (f.Type === 'Glow') {
+            info = 'glow:' + colors.slice(0, 2).join(',');
+          } else {
+            info = colors[0] || '#000000FF';
+          }
+          return name + '|' + info;
+        });
+        const filamentStr = specs.join("\n");
         const filamentBytes = new TextEncoder().encode(filamentStr);
         const filamentPtr = inst._malloc(filamentBytes.length + 1);
         new Uint8Array(mem.buffer, filamentPtr, filamentBytes.length + 1).set(
-          new Uint8Array([...filamentBytes, 0]) // null-terminated
+          new Uint8Array([...filamentBytes, 0])
         );
-        inst._openscad_export_3mf_v3(lastMeshPtr, lastMeshSize, idsPtr, data.nc, filamentPtr);
+        inst._openscad_export_3mf_v3(lastMeshPtr, lastMeshSize, filamentPtr);
         const outPtr = inst._openscad_get_3mf_output_ptr();
         const outSize = inst._openscad_get_3mf_output_size();
         if (outPtr > 0 && outSize > 0) {
@@ -680,7 +787,6 @@ difference() {
         } else {
           st.textContent = "导出失败：无输出";
         }
-        inst._free(idsPtr);
         inst._free(filamentPtr);
       } catch (e) {
         st.textContent = "导出失败: " + e;
