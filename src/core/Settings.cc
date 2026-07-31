@@ -479,6 +479,7 @@ SettingsEntryString SettingsExport3mf::export3mfMetaDataLicenseTerms(SECTION_EXP
                                                                      "meta-data-license-terms", "");
 SettingsEntryString SettingsExport3mf::export3mfMetaDataRating(SECTION_EXPORT_3MF, "meta-data-rating",
                                                                "");
+SettingsEntryString SettingsExport3mf::export3mfFilamentColors(SECTION_EXPORT_3MF, "filament-colors", "");
 
 SettingsEntryBool SettingsExportSvg::exportSvgAlwaysShowDialog(SECTION_EXPORT_SVG, "always-show-dialog",
                                                                true);

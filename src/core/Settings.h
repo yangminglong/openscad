@@ -585,6 +585,7 @@ public:
   static SettingsEntryString export3mfMetaDataCopyright;
   static SettingsEntryString export3mfMetaDataLicenseTerms;
   static SettingsEntryString export3mfMetaDataRating;
+  static SettingsEntryString export3mfFilamentColors;
 
   static constexpr std::array<const SettingsEntryBase *, 12> cmdline{
     &export3mfColorMode,

@@ -88,6 +88,7 @@ Containers& containers()
     add_item(*containers, {FileFormat::WRL, "wrl", "wrl", "VRML"});
     add_item(*containers, {FileFormat::AMF, "amf", "amf", "AMF"});
     add_item(*containers, {FileFormat::_3MF, "3mf", "3mf", "3MF"});
+    add_item(*containers, {FileFormat::_3MF_V4, "3mf_v4", "3mf", "3MF v4 (OrcaSlicer)"});
     add_item(*containers, {FileFormat::DXF, "dxf", "dxf", "DXF"});
     add_item(*containers, {FileFormat::SVG, "svg", "svg", "SVG"});
     add_item(*containers, {FileFormat::NEFDBG, "nefdbg", "nefdbg", "nefdbg"});
@@ -100,9 +101,7 @@ Containers& containers()
     add_item(*containers, {FileFormat::PNG, "png", "png", "PNG"});
     add_item(*containers, {FileFormat::PDF, "pdf", "pdf", "PDF"});
     add_item(*containers, {FileFormat::POV, "pov", "pov", "POV"});
-#ifdef __EMSCRIPTEN__
-    add_item(*containers, {FileFormat::BINMESH, "binmesh", "binmesh", "Binary Mesh (WASM)"});
-#endif
+    add_item(*containers, {FileFormat::BINMESH, "binmesh", "binmesh", "Binary Mesh"});
 
     // Alias
     containers->identifierToInfo["stl"] = containers->identifierToInfo["asciistl"];
@@ -174,11 +173,10 @@ bool is3D(FileFormat format)
 {
   return format == FileFormat::ASCII_STL || format == FileFormat::BINARY_STL ||
          format == FileFormat::OBJ || format == FileFormat::OFF || format == FileFormat::WRL ||
-         format == FileFormat::AMF || format == FileFormat::_3MF || format == FileFormat::NEFDBG ||
+         format == FileFormat::AMF || format == FileFormat::_3MF || format == FileFormat::_3MF_V4 ||
+         format == FileFormat::NEFDBG ||
          format == FileFormat::NEF3 || format == FileFormat::POV
-#ifdef __EMSCRIPTEN__
          || format == FileFormat::BINMESH
-#endif
          ;
 }
 
@@ -204,7 +202,7 @@ ExportInfo createExportInfo(const FileFormat& format, const FileFormatInfo& info
     .colorScheme = colorScheme,
   };
 
-  if (format == FileFormat::_3MF) {
+  if (format == FileFormat::_3MF || format == FileFormat::_3MF_V4) {
     exportInfo.options3mf = Export3mfOptions::withOptions(cmdLineOptions);
   } else if (format == FileFormat::PDF) {
     exportInfo.optionsPdf = ExportPdfOptions::withOptions(cmdLineOptions);
@@ -226,13 +224,14 @@ static void exportFile(const std::shared_ptr<const Geometry>& root_geom, std::os
   case FileFormat::WRL:        export_wrl(root_geom, output); break;
   case FileFormat::AMF:        export_amf(root_geom, output); break;
   case FileFormat::_3MF:       export_3mf(root_geom, output, exportInfo); break;
+  case FileFormat::_3MF_V4: 
+    export_3mf_v4_from_geometry(root_geom, exportInfo.options3mf->filamentColors, output);
+    break;
   case FileFormat::DXF:        export_dxf(root_geom, output); break;
   case FileFormat::SVG:        export_svg(root_geom, output, exportInfo); break;
   case FileFormat::PDF:        export_pdf(root_geom, output, exportInfo); break;
   case FileFormat::POV:        export_pov(root_geom, output, exportInfo); break;
-#ifdef __EMSCRIPTEN__
   case FileFormat::BINMESH:   export_binary_mesh_to_static_buffer(root_geom, output); break;
-#endif
 #ifdef ENABLE_CGAL
   case FileFormat::NEFDBG: export_nefdbg(root_geom, output); break;
   case FileFormat::NEF3:   export_nef3(root_geom, output); break;

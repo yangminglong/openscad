@@ -1,7 +1,3 @@
-#ifdef __EMSCRIPTEN__
-
-#include "wasm/binary_mesh_export.h"
-
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -15,6 +11,9 @@
 #include "geometry/manifold/ManifoldGeometry.h"
 #include "glview/ColorMap.h"
 #include "utils/printutils.h"
+
+#ifdef __EMSCRIPTEN__
+#include "wasm/binary_mesh_export.h"
 
 // Static buffer for storing the binary mesh export result.
 static std::vector<uint8_t> binaryMeshBuffer;
@@ -43,28 +42,8 @@ void openscad_export_3mf_v3(const uint8_t* binaryMeshData, uint32_t binaryMeshSi
   std::ostringstream oss;
   std::vector<uint8_t> meshData(binaryMeshData, binaryMeshData + binaryMeshSize);
 
-  // 解析换行分隔的耗材规格 → vector<FilamentColor>
-  // 格式: 每行 "name|serialize_format"
-  //   "PLA|#FF0000FF"
-  //   "PLA Silk|gradient:#FF0000FF,#00FF00FF;angle:0"
-  std::vector<FilamentColor> infos;
-  if (filamentInfos && filamentInfos[0] != '\0') {
-    std::istringstream iss(filamentInfos);
-    std::string line;
-    while (std::getline(iss, line, '\n')) {
-      if (line.empty()) continue;
-      FilamentColor fc;
-      size_t pipe = line.find('|');
-      if (pipe != std::string::npos) {
-        fc.name = line.substr(0, pipe);
-        fc = FilamentColor::deserialize(line.substr(pipe + 1));
-        fc.name = line.substr(0, pipe);  // restore name (deserialize 不设 name)
-      } else {
-        fc = FilamentColor::deserialize(line);
-      }
-      infos.push_back(fc);
-    }
-  }
+  std::vector<FilamentColor> infos = parseFilamentInfos(
+      filamentInfos ? std::string(filamentInfos) : std::string());
   export_3mf_v4(meshData, infos, oss);
   std::string result = oss.str();
   _3mfOutputBuffer.assign(result.begin(), result.end());
@@ -84,6 +63,13 @@ void openscad_free_3mf_output() {
 }
 
 } // extern "C"
+
+#else // !__EMSCRIPTEN__
+
+// Non-WASM build: binary mesh buffer is local
+static std::vector<uint8_t> binaryMeshBuffer;
+
+#endif // __EMSCRIPTEN__
 
 // Binary mesh format (little-endian):
 //   Header: 4 × uint32 = 16 bytes
@@ -197,7 +183,7 @@ static void collectGeometry(TriangleCollector& collector,
 }
 
 void export_binary_mesh_to_static_buffer(const std::shared_ptr<const Geometry>& geom,
-                                          std::ostream& /*output*/)
+                                          std::ostream& output)
 {
   binaryMeshBuffer.clear();
 
@@ -249,6 +235,6 @@ void export_binary_mesh_to_static_buffer(const std::shared_ptr<const Geometry>& 
     writeFloat32LE(binaryMeshBuffer, c.b());
     writeFloat32LE(binaryMeshBuffer, c.a());
   }
+  // Also write to output stream
+  output.write(reinterpret_cast<const char*>(binaryMeshBuffer.data()), binaryMeshBuffer.size());
 }
-
-#endif // __EMSCRIPTEN__

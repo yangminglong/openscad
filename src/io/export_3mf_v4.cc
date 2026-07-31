@@ -500,6 +500,27 @@ static std::string fuzzyMatchFilamentId(const std::string& filamentName) {
   return best_match.empty() ? std::string(DEFAULT_ID) : best_match;
 }
 
+// --- Auto-detect filament colors from binary mesh palette --------------------
+
+std::vector<FilamentColor> autoDetectFilamentColors(const std::vector<uint8_t>& meshData) {
+  BinaryMesh mesh;
+  if (!parseBinaryMesh(meshData, mesh)) return {};
+
+  std::vector<FilamentColor> result;
+  for (uint32_t i = 0; i < mesh.numColors; ++i) {
+    FilamentColor fc;
+    fc.type = FilamentColorType::Solid;
+    FilamentColorRGBA rgba;
+    rgba.R = static_cast<uint8_t>(mesh.colorPalette[i * 4 + 0] * 255.0f);
+    rgba.G = static_cast<uint8_t>(mesh.colorPalette[i * 4 + 1] * 255.0f);
+    rgba.B = static_cast<uint8_t>(mesh.colorPalette[i * 4 + 2] * 255.0f);
+    rgba.A = static_cast<uint8_t>(mesh.colorPalette[i * 4 + 3] * 255.0f);
+    fc.colors.push_back(rgba);
+    result.push_back(fc);
+  }
+  return result;
+}
+
 
 
 // --- Project settings config builder ------------------------------------------
@@ -628,6 +649,24 @@ static bool addStringToZip(zip_t *z, const std::string& name, const std::string&
 }
 
 // --- Public API --------------------------------------------------------------
+
+// High-level entry point: Geometry → binary mesh → export_3mf_v4
+// If filamentColors is empty, auto-detect from mesh palette.
+void export_3mf_v4_from_geometry(const std::shared_ptr<const Geometry>& geom,
+                                  const std::vector<FilamentColor>& filamentColors,
+                                  std::ostream& output)
+{
+  std::ostringstream meshBuffer;
+  export_binary_mesh_to_static_buffer(geom, meshBuffer);
+  std::string meshStr = meshBuffer.str();
+  std::vector<uint8_t> meshData(meshStr.begin(), meshStr.end());
+
+  std::vector<FilamentColor> colors = filamentColors;
+  if (colors.empty()) {
+    colors = autoDetectFilamentColors(meshData);
+  }
+  export_3mf_v4(meshData, colors, output);
+}
 
 void export_3mf_v4(const std::vector<uint8_t>& binaryMeshBuffer,
                    const std::vector<FilamentColor>& filamentColors,

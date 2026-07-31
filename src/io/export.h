@@ -4,6 +4,7 @@
 #include <boost/range/algorithm.hpp>
 #include <filesystem>
 #include <iostream>
+#include <sstream>
 #include <iterator>
 #include <map>
 #include <memory>
@@ -33,6 +34,7 @@ enum class FileFormat {
   WRL,
   AMF,
   _3MF,
+  _3MF_V4,
   DXF,
   SVG,
   NEFDBG,
@@ -179,6 +181,33 @@ struct ExportPdfOptions {
   }
 };
 
+// 耗材颜色类型
+enum class FilamentColorType {
+    Solid = 0,    // 纯色
+    Gradient = 1, // 渐变色
+    Glow = 2      // 夜光色
+};
+
+// RGBA 颜色
+struct FilamentColorRGBA {
+    uint8_t R = 0, G = 0, B = 0, A = 255;
+    std::string toHex() const;                        // → "#RRGGBBAA"
+    static FilamentColorRGBA fromHex(const std::string& hex);  // "#RRGGBBAA" →
+};
+
+// 耗材颜色描述 — 用于 export_3mf_v3
+struct FilamentColor {
+    std::string name = "PLA";                           // 耗材名 (如 "PLA")
+    FilamentColorType type = FilamentColorType::Solid;
+    std::vector<FilamentColorRGBA> colors;       // 纯色1个, 渐变色2个, 夜光色2个
+    int angle = 0;                               // 渐变角度 (0=竖直, 90=水平)
+
+    std::string serialize() const;                              // → "gradient:#RRGGBB,...;angle:0"
+    static FilamentColor deserialize(const std::string& str);   // ← 同上格式
+};
+
+std::vector<FilamentColor> parseFilamentInfos(const std::string& str);
+
 struct Export3mfOptions {
   Export3mfColorMode colorMode;
   Export3mfUnit unit;
@@ -192,6 +221,7 @@ struct Export3mfOptions {
   std::string metaDataCopyright;
   std::string metaDataLicenseTerms;
   std::string metaDataRating;
+  std::vector<FilamentColor> filamentColors;
 
   static const std::shared_ptr<const Export3mfOptions> withOptions(
     const CmdLineExportOptions& cmdLineOptions)
@@ -223,6 +253,9 @@ struct Export3mfOptions {
                             Settings::SettingsExport3mf::export3mfMetaDataLicenseTerms),
       .metaDataRating = set_cmd_line_option(cmdLineOptions, Settings::SECTION_EXPORT_3MF,
                                             Settings::SettingsExport3mf::export3mfMetaDataRating),
+      .filamentColors = parseFilamentInfos(
+          set_cmd_line_option(cmdLineOptions, Settings::SECTION_EXPORT_3MF,
+                              Settings::SettingsExport3mf::export3mfFilamentColors)),
     });
   }
 
@@ -309,31 +342,6 @@ bool exportFileByName(const std::shared_ptr<const class Geometry>& root_geom,
 bool exportFileStdOut(const std::shared_ptr<const class Geometry>& root_geom,
                       const ExportInfo& exportInfo);
 
-// 耗材颜色类型
-enum class FilamentColorType {
-    Solid = 0,    // 纯色
-    Gradient = 1, // 渐变色
-    Glow = 2      // 夜光色
-};
-
-// RGBA 颜色
-struct FilamentColorRGBA {
-    uint8_t R = 0, G = 0, B = 0, A = 255;
-    std::string toHex() const;                        // → "#RRGGBBAA"
-    static FilamentColorRGBA fromHex(const std::string& hex);  // "#RRGGBBAA" →
-};
-
-// 耗材颜色描述 — 用于 export_3mf_v3
-struct FilamentColor {
-    std::string name;                           // 耗材名 (如 "PLA")
-    FilamentColorType type = FilamentColorType::Solid;
-    std::vector<FilamentColorRGBA> colors;       // 纯色1个, 渐变色2个, 夜光色2个
-    int angle = 0;                               // 渐变角度 (0=竖直, 90=水平)
-
-    std::string serialize() const;                              // → "gradient:#RRGGBB,...;angle:0"
-    static FilamentColor deserialize(const std::string& str);   // ← 同上格式
-};
-
 void export_stl(const std::shared_ptr<const Geometry>& geom, std::ostream& output, bool binary = true);
 void export_3mf(const std::shared_ptr<const Geometry>& geom, std::ostream& output,
                 const ExportInfo& exportInfo);
@@ -343,6 +351,35 @@ void export_3mf_v3(const std::vector<uint8_t>& binaryMeshBuffer,
 void export_3mf_v4(const std::vector<uint8_t>& binaryMeshBuffer,
                    const std::vector<FilamentColor>& infos,
                    std::ostream& output);
+void export_3mf_v4_from_geometry(const std::shared_ptr<const Geometry>& geom,
+                                  const std::vector<FilamentColor>& filamentColors,
+                                  std::ostream& output);
+std::vector<FilamentColor> autoDetectFilamentColors(const std::vector<uint8_t>& meshData);
+
+// Parse newline-separated "name|serialize" filament infos (supports literal \n)
+inline std::vector<FilamentColor> parseFilamentInfos(const std::string& str) {
+  std::vector<FilamentColor> infos;
+  if (str.empty()) return infos;
+  std::string normalized = str;
+  for (size_t pos = 0; (pos = normalized.find("\\n", pos)) != std::string::npos; pos += 1)
+    normalized.replace(pos, 2, "\n");
+  std::istringstream iss(normalized);
+  std::string line;
+  while (std::getline(iss, line, '\n')) {
+    if (line.empty()) continue;
+    FilamentColor fc;
+    size_t pipe = line.find('|');
+    if (pipe != std::string::npos) {
+      fc.name = line.substr(0, pipe);
+      fc = FilamentColor::deserialize(line.substr(pipe + 1));
+      fc.name = line.substr(0, pipe);
+    } else {
+      fc = FilamentColor::deserialize(line);
+    }
+    infos.push_back(fc);
+  }
+  return infos;
+}
 void export_obj(const std::shared_ptr<const Geometry>& geom, std::ostream& output);
 void export_off(const std::shared_ptr<const Geometry>& geom, std::ostream& output);
 void export_wrl(const std::shared_ptr<const Geometry>& geom, std::ostream& output);
