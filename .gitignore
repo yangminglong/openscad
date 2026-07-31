@@ -116,3 +116,6 @@ package-lock.json
 node_modules/**
 
 **/temp
+# Third-party SCAD libraries (manually synced, MCAD is a submodule)
+libraries/*
+!libraries/MCAD
