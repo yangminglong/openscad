@@ -36,3 +36,26 @@ RUN rm -f CMakeCache.txt && rm -rf CMakeFiles && \
     -DNULLGL=ON && \
     cmake --build . -j$(nproc) && \
     cmake --install . --prefix /opt/openscad-cli
+
+# 4. Package (in-container packaging avoids symlink issues)
+RUN mkdir -p /pkg/bin /pkg/lib/openscad && \
+    cp /opt/openscad-cli/bin/openscad /pkg/lib/openscad/ && \
+    cp /lib/ld-musl-x86_64.so.1 /pkg/lib/openscad/ && \
+    for lib in $(ldd /opt/openscad-cli/bin/openscad 2>/dev/null | grep -o '/[^ ]*'); do \
+      [ -f "$lib" ] && cp -P "$lib" /pkg/lib/openscad/; \
+    done && \
+    printf '#!/bin/sh\nDIR="$$(cd "$$(dirname "$$0")" && pwd)"\nLIBDIR="$$DIR/../lib/openscad"\nexport OPENSCADPATH="$$DIR/.."\nexec "$$LIBDIR/ld-musl-x86_64.so.1" --library-path "$$LIBDIR" "$$LIBDIR/openscad" "$$@"\n' > /pkg/bin/openscad && \
+    chmod +x /pkg/bin/openscad && \
+    for d in color-schemes examples fonts libraries locale shaders; do \
+      if [ -d "/opt/openscad-cli/share/openscad/$d" ]; then \
+        cp -a "/opt/openscad-cli/share/openscad/$d" /pkg/; \
+      elif [ -d "/src/$d" ]; then \
+        cp -a "/src/$d" /pkg/; \
+      fi; \
+    done && \
+    cp -a /opt/openscad-cli/share/openscad/locale /pkg/ 2>/dev/null || true && \
+    strip /pkg/lib/openscad/openscad 2>/dev/null || true && \
+    echo "Packaging done"
+
+# 5. Extract package from container
+#    docker build -t openscad-musl . && docker run --rm openscad-musl tar czf - -C /pkg . > openscad-musl.tar.gz
