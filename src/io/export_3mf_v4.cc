@@ -308,7 +308,7 @@ static std::string buildObjectModelXML(
         static_cast<uint32_t>(colorIdx) < paintColors.size()) {
       const auto& pc = paintColors[colorIdx];
       if (!pc.empty()) {
-        xml << " slic3rpe:mmu_segmentation=\"" << pc << "\"";
+        xml << " paint_color=\"" << pc << "\"";
       }
     }
 
