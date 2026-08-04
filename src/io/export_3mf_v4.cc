@@ -463,13 +463,39 @@ static std::vector<std::string> splitTokens(const std::string& s) {
 
 // Fuzzy match a user filament name (e.g. "PLA") to an Anycubic filament_settings_id
 // (e.g. "Anycubic PLA @Anycubic Kobra X 0.4 nozzle")
+// Rules:
+//   1. Split input by "@" into front (material) and back (printer/nozzle) parts
+//   2. If input has no "@", default back part = "Anycubic Kobra X 0.4 nozzle"
+//   3. Back part must match exactly (case-insensitive) against the candidate's back part
+//   4. Front part fuzzy-matches by space-separated tokens
 static std::string fuzzyMatchFilamentId(const std::string& filamentName) {
   static const char* DEFAULT_PRINTER = "Anycubic Kobra X";
   static const char* DEFAULT_NOZZLE = "0.4 nozzle";
   static const char* DEFAULT_ID = "Anycubic PLA @Anycubic Kobra X 0.4 nozzle";
 
-  std::string keyword = extractFilamentKeyword(filamentName);
-  if (keyword.empty()) keyword = filamentName;
+  // ---- 1. Split input into front / back ----
+  std::string front_input, back_input;
+  size_t at_pos = filamentName.find('@');
+  if (at_pos != std::string::npos) {
+    front_input = filamentName.substr(0, at_pos);
+    back_input  = filamentName.substr(at_pos + 1);
+  } else {
+    front_input = filamentName;
+    back_input  = std::string(DEFAULT_PRINTER) + " " + DEFAULT_NOZZLE;
+  }
+
+  // Trim whitespace
+  auto trim = [](std::string& s) {
+    size_t b = s.find_first_not_of(" \t");
+    if (b == std::string::npos) { s.clear(); return; }
+    size_t e = s.find_last_not_of(" \t");
+    s = s.substr(b, e - b + 1);
+  };
+  trim(front_input);
+  trim(back_input);
+
+  std::string keyword = extractFilamentKeyword(front_input);
+  if (keyword.empty()) keyword = front_input;
   std::vector<std::string> tokens = splitTokens(keyword);
 
   std::string best_match;
@@ -477,14 +503,30 @@ static std::string fuzzyMatchFilamentId(const std::string& filamentName) {
 
   const auto& candidates = getFilamentCandidates();
   for (const auto& candidate : candidates) {
-    std::string local_key = extractFilamentKeyword(candidate);
+    // ---- Split candidate into front / back ----
+    std::string front_candidate, back_candidate;
+    size_t cat_pos = candidate.find('@');
+    if (cat_pos != std::string::npos) {
+      front_candidate = candidate.substr(0, cat_pos);
+      back_candidate  = candidate.substr(cat_pos + 1);
+    } else {
+      front_candidate = candidate;
+    }
+    trim(front_candidate);
+    trim(back_candidate);
+
+    // ---- 3. Back part must match exactly ----
+    if (strToLower(back_candidate) != strToLower(back_input)) {
+      continue;
+    }
+
+    // ---- 4. Front part fuzzy match ----
+    std::string local_key = extractFilamentKeyword(front_candidate);
     if (local_key.empty()) continue;
 
     std::string local_lower = strToLower(local_key);
-    bool isDefaultPrinter = candidate.find(DEFAULT_PRINTER) != std::string::npos;
-    bool isDefaultNozzle  = candidate.find(DEFAULT_NOZZLE) != std::string::npos;
-    int score = isDefaultPrinter ? 2 : (isDefaultNozzle ? 1 : 0);
 
+    int score = 0;
     for (const auto& token : tokens) {
       if (!token.empty() && local_lower.find(strToLower(token)) != std::string::npos) {
         ++score;
