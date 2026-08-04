@@ -42,9 +42,15 @@ RUN mkdir -p /pkg/bin /pkg/lib/openscad && \
     cp /opt/openscad-cli/bin/openscad /pkg/lib/openscad/ && \
     cp /lib/ld-musl-x86_64.so.1 /pkg/lib/openscad/ && \
     for lib in $(ldd /opt/openscad-cli/bin/openscad 2>/dev/null | grep -o '/[^ ]*'); do \
-      [ -f "$lib" ] && cp -P "$lib" /pkg/lib/openscad/; \
+      real=$(readlink -f "$lib" 2>/dev/null || echo "$lib"); \
+      if [ -f "$real" ]; then \
+        base=$(basename "$real"); \
+        cp "$real" "/pkg/lib/openscad/$base"; \
+        linkname=$(basename "$lib"); \
+        [ "$linkname" != "$base" ] && ln -sf "$base" "/pkg/lib/openscad/$linkname"; \
+      fi; \
     done && \
-    printf '#!/bin/sh\nDIR="$$(cd "$$(dirname "$$0")" && pwd)"\nLIBDIR="$$DIR/../lib/openscad"\nexport OPENSCADPATH="$$DIR/.."\nexec "$$LIBDIR/ld-musl-x86_64.so.1" --library-path "$$LIBDIR" "$$LIBDIR/openscad" "$$@"\n' > /pkg/bin/openscad && \
+    printf '#!/bin/sh\nDIR="$(cd "$(dirname "$0")" && pwd)"\nLIBDIR="$DIR/../lib/openscad"\nexport OPENSCADPATH="$DIR/.."\nexec "$LIBDIR/ld-musl-x86_64.so.1" --library-path "$LIBDIR" "$LIBDIR/openscad" "$@"\n' > /pkg/bin/openscad && \
     chmod +x /pkg/bin/openscad && \
     for d in color-schemes examples fonts libraries locale shaders; do \
       if [ -d "/opt/openscad-cli/share/openscad/$d" ]; then \
