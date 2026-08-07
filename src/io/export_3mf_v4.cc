@@ -1,29 +1,33 @@
 /*
-  Export 3MF v4 — OrcaSlicer-compatible 3MF with split object structure
+  Export 3MF v4 — OrcaSlicer-compatible 3MF with Production Extension
 
   This file implements export_3mf_v4(), a standalone 3MF exporter that:
   - Reads the binary mesh format directly (does NOT use lib3mf)
-  - Writes OrcaSlicer-compatible 3MF with Production Extension
-  - Splits mesh data into per-object files under 3D/Objects/
-  - Generates Metadata/model_settings.config for object/plate/assemble info
-  - Generates Metadata/Slic3r_PE.config for extruder colour palette
+  - Writes OrcaSlicer/BambuStudio-compatible 3MF XML with paint_color MMU tags
+  - Splits mesh data into one object file under 3D/Objects/
+  - Generates Metadata/project_settings.config (filament arrays + per-extruder params)
+  - Generates Metadata/slice_info.config
+  - Embeds Anycubic profile data for filament_settings_id fuzzy matching
   - Uses libzip for zip archive creation
 
   Binary mesh format (little-endian):
     Header (16 bytes): numVertices(u32) numFaces(u32) numColors(u32) numIndices(u32)
-    Positions:  float32[numVertices * 3]
-    Indices:    uint32[numIndices]
-    ColorIndices: int32[numFaces]     — per-face index into ColorPalette (-1 = default → 0)
-    ColorPalette: float32[numColors * 4] — RGBA, 0..1 range
+    Positions:     float32[numVertices * 3]
+    Indices:       uint32[numIndices]
+    ColorIndices:  int32[numFaces]         — per-face index into ColorPalette (-1 → default 0)
+    ColorPalette:  float32[numColors * 4]  — RGBA, 0..1 range
 
-  OrcaSlicer 3MF file structure:
+  Generated 3MF internal structure:
     [Content_Types].xml
     _rels/.rels
     3D/_rels/3dmodel.model.rels
-    3D/3dmodel.model
-    3D/Objects/<name>_<id>.model
-    Metadata/model_settings.config
-    Metadata/Slic3r_PE.config
+    3D/3dmodel.model                        — main model (composite object + build placement)
+    3D/Objects/<name>_1.model               — single object mesh with paint_color
+    Metadata/project_settings.config        — filament arrays expanded to extruder count
+    Metadata/slice_info.config              — slicer metadata
+
+  Not yet implemented (TODO):
+    - Metadata/plate_*.png                  — plate thumbnails
 */
 
 #ifdef ENABLE_LIBZIP
@@ -677,6 +681,33 @@ static std::string generateUUID() {
   return oss.str();
 }
 
+// --- Model settings config builder --------------------------------------------
+// Generates a minimal Metadata/model_settings.config for OrcaSlicer
+// compatibility (object name + plate assignment).
+static std::string buildModelSettingsConfig(const std::string& modelName,
+                                            const std::string& printerModelId,
+                                            const std::string& nozzleDiameters)
+{
+  std::ostringstream xml;
+  xml << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
+  xml << "<config>\n";
+  // Object
+  xml << "  <object id=\"1\">\n";
+  xml << "    <metadata key=\"name\" value=\"" << xmlEscape(modelName) << "\"/>\n";
+  xml << "  </object>\n";
+  // Plate (single plate with object placed)
+  xml << "  <plate>\n";
+  xml << "    <metadata key=\"plater_id\" value=\"1\"/>\n";
+  xml << "    <metadata key=\"plater_name\" value=\"Plate 1\"/>\n";
+  xml << "    <metadata key=\"printer_model_id\" value=\""
+      << xmlEscape(printerModelId) << "\"/>\n";
+  xml << "    <metadata key=\"nozzle_diameters\" value=\""
+      << xmlEscape(nozzleDiameters) << "\"/>\n";
+  xml << "  </plate>\n";
+  xml << "</config>\n";
+  return xml.str();
+}
+
 // --- libzip helpers ----------------------------------------------------------
 
 static bool addStringToZip(zip_t *z, const std::string& name, const std::string& content) {
@@ -770,9 +801,9 @@ void export_3mf_v4(const std::vector<uint8_t>& binaryMeshBuffer,
   std::string modelRelsXml    = buildModelRelsXML(objectFileName);
   std::string contentTypes    = buildContentTypesXML();
   std::string rels            = buildRelsXML();
-  // std::string modelSettings   = buildModelSettingsConfig(modelName,
-  //                                                        extruderColors,
-  //                                                        transformX, transformY, transformZ);
+  std::string printerModel    = "Anycubic Kobra X";
+  std::string nozzleDiameters = "0.4";
+  std::string modelSettings   = buildModelSettingsConfig(modelName, printerModel, nozzleDiameters);
   // 7. Create zip via libzip
   std::string tmpPath = (std::filesystem::temp_directory_path() /
                          ("openscad_3mf_v4_" + safeModelName + ".3mf")).string();
@@ -793,9 +824,11 @@ void export_3mf_v4(const std::vector<uint8_t>& binaryMeshBuffer,
   ok = ok && addStringToZip(z, "3D/_rels/3dmodel.model.rels", modelRelsXml);
   ok = ok && addStringToZip(z, "3D/Objects/" + objectFileName, objectModelXml);
   // Metadata files
+  ok = ok && addStringToZip(z, "Metadata/model_settings.config", modelSettings);
   std::string projectSettings = buildProjectSettingsConfig(filamentColors);
   ok = ok && addStringToZip(z, "Metadata/project_settings.config", projectSettings);
-  ok = ok && addStringToZip(z, "Metadata/slice_info.config", std::string(SLICE_INFO_CONFIG));
+  std::string sliceInfoConfig(SLICE_INFO_CONFIG);
+  ok = ok && addStringToZip(z, "Metadata/slice_info.config", sliceInfoConfig);
 
   if (zip_close(z) < 0 || !ok) {
     LOG(message_group::Export_Error, "Failed to write zip archive for 3MF v4 export");
