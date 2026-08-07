@@ -742,8 +742,8 @@ difference() {
     }
     window.export3mf = async function () {
       const inst = wasmInst; if (!inst) return;
-      if (!lastMeshPtr || !inst._openscad_export_3mf_v3) {
-        alert("请先渲染模型，且 WASM 需支持 export_3mf_v3");
+      if (!lastMeshPtr || !inst._openscad_export_3mf) {
+        alert("请先渲染模型，且 WASM 需支持 export_3mf");
         return;
       }
       const st = document.getElementById("status");
@@ -774,7 +774,7 @@ difference() {
         new Uint8Array(mem.buffer, filamentPtr, filamentBytes.length + 1).set(
           new Uint8Array([...filamentBytes, 0])
         );
-        inst._openscad_export_3mf_v3(lastMeshPtr, lastMeshSize, filamentPtr);
+        inst._openscad_export_3mf(lastMeshPtr, lastMeshSize, filamentPtr);
         const outPtr = inst._openscad_get_3mf_output_ptr();
         const outSize = inst._openscad_get_3mf_output_size();
         if (outPtr > 0 && outSize > 0) {

@@ -36,7 +36,7 @@ void openscad_free_binary_mesh() {
   binaryMeshBuffer.shrink_to_fit();
 }
 
-void openscad_export_3mf_v3(const uint8_t* binaryMeshData, uint32_t binaryMeshSize,
+void openscad_export_3mf(const uint8_t* binaryMeshData, uint32_t binaryMeshSize,
                             const char* filamentInfos) {
   _3mfOutputBuffer.clear();
   std::ostringstream oss;
