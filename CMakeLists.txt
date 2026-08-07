@@ -294,9 +294,10 @@ if (CMAKE_SYSTEM_NAME STREQUAL Emscripten)
   set(MANIFOLD_PAR OFF CACHE BOOL "" FORCE)
   set(NULLGL ON CACHE BOOL "" FORCE)
   set(USE_MIMALLOC OFF CACHE BOOL "" FORCE)
-  set(ENV{PKG_CONFIG_PATH} "/emsdk/upstream/emscripten/cache/sysroot/lib/pkgconfig")
+  set(EMSCRIPTEN_SYSROOT "${EMSCRIPTEN_ROOT_PATH}/cache/sysroot")
+  set(ENV{PKG_CONFIG_PATH} "${EMSCRIPTEN_SYSROOT}/lib/pkgconfig")
   target_compile_definitions(OpenSCADLibInternal PUBLIC CGAL_DISABLE_ROUNDING_MATH_CHECK)
-  target_link_libraries(OpenSCADLibInternal PUBLIC /emsdk/upstream/emscripten/cache/sysroot/lib/libz.a)
+  target_link_libraries(OpenSCADLibInternal PUBLIC "${EMSCRIPTEN_SYSROOT}/lib/libz.a")
 
   # https://emscripten.org/docs/tools_reference/emcc.html
   # https://emscripten.org/docs/tools_reference/settings_reference.html
@@ -308,7 +309,7 @@ if (CMAKE_SYSTEM_NAME STREQUAL Emscripten)
     -sDISABLE_EXCEPTION_CATCHING=0
     -sEXIT_RUNTIME=0
     -sEXPORTED_RUNTIME_METHODS=['ENV','ERRNO_CODES','FS','PATH','callMain']
-    -sEXPORTED_FUNCTIONS=['_main','_malloc','_free','_openscad_get_binary_mesh_ptr','_openscad_get_binary_mesh_size','_openscad_free_binary_mesh','_openscad_export_3mf_v3','_openscad_get_3mf_output_ptr','_openscad_get_3mf_output_size','_openscad_free_3mf_output']
+    -sEXPORTED_FUNCTIONS=['_main','_malloc','_free','_openscad_get_binary_mesh_ptr','_openscad_get_binary_mesh_size','_openscad_free_binary_mesh','_openscad_export_3mf','_openscad_get_3mf_output_ptr','_openscad_get_3mf_output_size','_openscad_free_3mf_output']
     -sMAXIMUM_MEMORY=4GB
 
     # -g produces DWARF debug info, which is quite large and may need debugger extensions.
