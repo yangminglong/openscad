@@ -212,6 +212,17 @@ async function handleHealth(req, res) {
   }
 }
 
+// ── D-param helper: extract -Dvar=val from query string ──────────────────
+
+function extractDVars(url) {
+  const dVars = url.searchParams.getAll('D');
+  const args = [];
+  for (const d of dVars) {
+    args.push('-D', d);
+  }
+  return args;
+}
+
 // ── Render (STL binary) ───────────────────────────────────────────────────
 
 async function handleRender(req, res) {
@@ -236,7 +247,9 @@ async function handleRender(req, res) {
     const source = scadSource.replace(/\r\n/g, '\n');
     await writeFile(inputPath, source, 'utf8');
 
-    const { stdout } = await runOpenSCAD(['-o', outputPath, inputPath]);
+    const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+    const dArgs = extractDVars(url);
+    const { stdout } = await runOpenSCAD(['-o', outputPath, ...dArgs, inputPath]);
 
     const stlData = await readFile(outputPath);
 
@@ -286,8 +299,9 @@ async function handlePreview(req, res) {
     // Default: --preview (faster, good for preview)
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
     const mode = url.searchParams.get('mode') || 'render';
+    const dArgs = extractDVars(url);
 
-    const args = ['-o', outputPath];
+    const args = ['-o', outputPath, ...dArgs];
     if (mode === 'preview') {
       args.push('--preview');
     } else {
@@ -343,6 +357,7 @@ async function handleExport(req, res) {
 
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
     const fmt = url.searchParams.get('format') || 'stl';
+    const dArgs = extractDVars(url);
 
     // Validate format
     const validFormats = ['stl', '3mf', 'off', 'amf', 'svg', 'dxf', 'png', 'pdf', 'csg', 'ast', 'term', 'param'];
@@ -354,7 +369,7 @@ async function handleExport(req, res) {
     const ext = fmt === 'png' ? 'png' : fmt;
     const outputPath = join(ws, `output.${ext}`);
 
-    const args = ['-o', outputPath];
+    const args = ['-o', outputPath, ...dArgs];
     if (fmt === '3mf') {
       // Use v4 exporter (OrcaSlicer-compatible with paint_color MMU tags)
       args.push('--export-format', '3mf_v4');
@@ -383,6 +398,40 @@ async function handleExport(req, res) {
     json(res, 500, { error: err.message });
   } finally {
     releaseSlot();
+    fsRm(ws, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+// ── Params: extract Customizer parameter definitions ─────────────────────
+
+async function handleParams(req, res) {
+  const t0 = performance.now();
+  const ws = await jobWorkspace('params');
+  const inputPath = join(ws, 'model.scad');
+  const outputPath = join(ws, 'params.json');
+
+  try {
+    const body = await readBody(req);
+    logRequest(req, body);
+
+    const scadSource = body.toString('utf8');
+    if (!scadSource.trim()) {
+      return json(res, 400, { error: 'Empty SCAD source' });
+    }
+
+    const source = scadSource.replace(/\r\n/g, '\n');
+    await writeFile(inputPath, source, 'utf8');
+
+    await runOpenSCAD(['-o', outputPath, '--export-format=param', inputPath]);
+
+    const raw = await readFile(outputPath, 'utf8');
+    const params = JSON.parse(raw);
+    logDone(req, Buffer.from(raw), Math.round(performance.now() - t0));
+    json(res, 200, params);
+  } catch (err) {
+    logFail(req, err, Math.round(performance.now() - t0));
+    json(res, 500, { error: err.message });
+  } finally {
     fsRm(ws, { recursive: true, force: true }).catch(() => {});
   }
 }
@@ -439,6 +488,9 @@ async function handleRequest(req, res) {
   }
   if (req.method === 'POST' && url.pathname === '/api/export') {
     return handleExport(req, res);
+  }
+  if (req.method === 'POST' && url.pathname === '/api/params') {
+    return handleParams(req, res);
   }
 
   // Static files
