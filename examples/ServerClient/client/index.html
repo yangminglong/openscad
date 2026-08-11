@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OpenSCAD 服务端渲染 Demo</title>
+
+<!-- CodeMirror editor -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/theme/material-darker.min.css">
+
+<!-- Our styles -->
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<!-- ── Toolbar ────────────────────────────────────────────────── -->
+<header id="toolbar">
+  <span class="logo">🔷 OpenSCAD 服务端渲染</span>
+  <span class="badge">服务端计算 · 浏览器仅预览</span>
+
+  <div class="toolbar-actions">
+    <select id="export-format">
+      <option value="stl">STL 网格</option>
+      <option value="3mf">3MF</option>
+      <option value="off">OFF</option>
+      <option value="amf">AMF</option>
+      <option value="svg">SVG (2D)</option>
+      <option value="dxf">DXF (2D)</option>
+      <option value="png">PNG 图片</option>
+      <option value="csg">CSG 调试</option>
+      <option value="ast">AST 调试</option>
+    </select>
+
+    <button id="btn-preview" class="btn btn-primary">▶ 3D 预览</button>
+    <button id="btn-png" class="btn btn-default">🖼 PNG</button>
+    <button id="btn-export" class="btn btn-export">⬇ 导出</button>
+
+    <span id="status" class="status-idle">● 就绪</span>
+    <span id="concurrency"></span>
+  </div>
+</header>
+
+<!-- ── Main layout ──────────────────────────────────────────────── -->
+<main id="main">
+  <!-- SCAD Editor -->
+  <section id="editor-panel" class="panel">
+    <div class="panel-header">
+      <span>📝 SCAD 脚本编辑器</span>
+      <div class="panel-header-actions">
+        <button id="btn-example-basic" class="btn-sm">盒体</button>
+        <button id="btn-example-gear" class="btn-sm">齿轮</button>
+        <button id="btn-example-text" class="btn-sm">文字</button>
+        <button id="btn-example-csg" class="btn-sm">CSG 组合</button>
+      </div>
+    </div>
+    <div id="editor-container"></div>
+    <div class="panel-footer">
+      <span id="error-msg" class="hidden"></span>
+    </div>
+  </section>
+
+  <!-- Preview area -->
+  <section id="preview-panel" class="panel">
+    <div class="panel-header">
+      <span>👁 3D 预览</span>
+      <span class="panel-header-hint">SCAD 脚本发往服务端执行，浏览器不运行脚本</span>
+    </div>
+    <div id="viewer-container">
+      <div id="viewer-placeholder">
+        <div class="placeholder-icon">📐</div>
+        <p>点击 <strong>3D 预览</strong> 将 SCAD 脚本发送到服务端渲染</p>
+        <p class="hint">Ctrl+Enter 快捷渲染 · 浏览器端仅做 3D 显示</p>
+      </div>
+      <div id="loading">
+        <div class="spinner"></div>
+      </div>
+      <div id="legend"></div>
+      <div id="info"></div>
+    </div>
+    <!-- PNG overlay -->
+    <div id="png-overlay">
+      <div id="png-overlay-header">
+        🖼 PNG 渲染结果
+        <button id="btn-close-png" class="btn-sm">✕ 关闭</button>
+      </div>
+      <img id="png-result" alt="PNG 预览">
+    </div>
+  </section>
+</main>
+
+<!-- ── Dependencies ──────────────────────────────────────────────── -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/clike/clike.min.js"></script>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module" src="/app.js"></script>
+</body>
+</html>
