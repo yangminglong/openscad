@@ -1,0 +1,96 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openscad
+  namespace: acop-dev
+  labels:
+    app: openscad
+    app.kubernetes.io/instance: acop-dev
+    app.kubernetes.io/name: acop
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: openscad
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 25%
+      maxSurge: 25%
+  revisionHistoryLimit: 10
+  progressDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        app: openscad
+    spec:
+      volumes:
+        - name: host-time
+          hostPath:
+            path: /etc/localtime
+            type: ''
+      containers:
+        - name: openscad
+          image: swr.cn-south-1.myhuaweicloud.com/anycubedevops/openscad:latest
+          ports:
+            - name: http-3000
+              containerPort: 3000
+              protocol: TCP
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "2Gi"
+              cpu: "1000m"
+          volumeMounts:
+            - name: host-time
+              readOnly: true
+              mountPath: /etc/localtime
+          imagePullPolicy: Always
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
+      dnsPolicy: ClusterFirst
+      imagePullSecrets:
+        - name: dockerconfigjson
+      schedulerName: default-scheduler
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: openscad
+  namespace: acop-dev
+  labels:
+    app: openscad
+    app.kubernetes.io/name: acop
+spec:
+  selector:
+    app: openscad
+  ports:
+    - port: 3000
+      targetPort: 3000
+      name: http
+  type: ClusterIP
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: openscad
+  namespace: acop-dev
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: 'false'
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: openscad-anylab-itdev.anycubic.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: openscad
+                port:
+                  number: 3000
