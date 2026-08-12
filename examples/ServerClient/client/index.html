@@ -52,9 +52,18 @@
         <button id="btn-example-gear" class="btn-sm">齿轮</button>
         <button id="btn-example-text" class="btn-sm">文字</button>
         <button id="btn-example-csg" class="btn-sm">CSG 组合</button>
+        <button id="btn-example-customizer" class="btn-sm">参数化</button>
       </div>
     </div>
     <div id="editor-container"></div>
+    <!-- Parameter panel (hidden when no parameters detected) -->
+    <div id="param-panel" class="hidden">
+      <div class="param-panel-header">
+        ⚙ 参数
+        <button id="btn-reset-params" class="btn-sm">↺ 重置全部</button>
+      </div>
+      <div id="param-list"></div>
+    </div>
     <div class="panel-footer">
       <span id="error-msg" class="hidden"></span>
     </div>

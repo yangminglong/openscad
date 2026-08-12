@@ -50,6 +50,11 @@ const editor = CodeMirror(document.getElementById('editor-container'), {
   value: DEFAULT_SCAD,
 });
 
+// ── 参数状态 ──────────────────────────────────────────────────────────────
+let currentParams = null;   // { title, parameters: [...] }
+let paramValues = {};       // { paramName: currentValue }
+let paramDetectTimer = null;
+
 // ── DOM 引用 ─────────────────────────────────────────────────────────────
 const viewerEl    = document.getElementById('viewer-container');
 const placeholder = document.getElementById('viewer-placeholder');
@@ -208,6 +213,252 @@ async function checkHealth() {
  * @param {string} [format]
  * @returns {Promise<ArrayBuffer>}
  */
+// ── 参数检测 ─────────────────────────────────────────────────────────────
+
+async function detectParams() {
+  const scadSource = editor.getValue().trim();
+  if (!scadSource) return;
+
+  try {
+    const res = await fetch(`${API}/params`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: scadSource,
+    });
+    if (!res.ok) { hideParamPanel(); return; }
+    const data = await res.json();
+    if (!data.parameters || data.parameters.length === 0) { hideParamPanel(); return; }
+
+    // Preserve existing values for params that still exist
+    const newValues = {};
+    for (const p of data.parameters) {
+      if (paramValues[p.name] !== undefined) {
+        newValues[p.name] = paramValues[p.name];
+      } else {
+        newValues[p.name] = p.initial;
+      }
+    }
+    paramValues = newValues;
+    currentParams = data;
+    renderParamPanel(data);
+  } catch {
+    // silently ignore detection errors
+  }
+}
+
+function hideParamPanel() {
+  document.getElementById('param-panel').classList.add('hidden');
+  currentParams = null;
+}
+
+function triggerParamDetection() {
+  if (paramDetectTimer) clearTimeout(paramDetectTimer);
+  paramDetectTimer = setTimeout(detectParams, 600);
+}
+
+// Listen for editor changes
+editor.on('change', triggerParamDetection);
+
+// ── 参数面板渲染 ─────────────────────────────────────────────────────────
+
+function renderParamPanel(data) {
+  const panel = document.getElementById('param-panel');
+  const list = document.getElementById('param-list');
+  panel.classList.remove('hidden');
+
+  // Group params
+  const groups = {};
+  for (const p of data.parameters) {
+    const g = p.group || 'Parameters';
+    if (!groups[g]) groups[g] = [];
+    groups[g].push(p);
+  }
+
+  list.innerHTML = '';
+  for (const [groupName, params] of Object.entries(groups)) {
+    const groupDiv = document.createElement('div');
+    groupDiv.className = 'param-group';
+
+    const header = document.createElement('div');
+    header.className = 'param-group-header';
+    header.innerHTML = `<span class="arrow">▼</span> ${escapeHTML(groupName)}`;
+    header.onclick = () => groupDiv.classList.toggle('collapsed');
+    groupDiv.appendChild(header);
+
+    for (const p of params) {
+      groupDiv.appendChild(createParamRow(p));
+    }
+    list.appendChild(groupDiv);
+  }
+}
+
+function setParamValue(name, value) {
+  paramValues[name] = value;
+  updateParamRowUI(name, value);
+}
+
+function updateParamRowUI(name, value) {
+  const row = document.getElementById(`param-row-${name}`);
+  if (!row) return;
+  const param = currentParams?.parameters?.find(p => p.name === name);
+  if (!param) return;
+
+  // Update modified state
+  const isModified = JSON.stringify(value) !== JSON.stringify(param.initial);
+  row.classList.toggle('modified', isModified);
+
+  // Update value display
+  const display = row.querySelector('.param-value-display');
+  if (display) {
+    if (Array.isArray(value)) display.textContent = `[${value.map(v => parseFloat(v.toFixed(4))).join(', ')}]`;
+    else if (typeof value === 'number') display.textContent = parseFloat(value.toFixed(4));
+    else display.textContent = String(value);
+  }
+
+  // Update controls
+  const checkbox = row.querySelector('input[type="checkbox"]');
+  if (checkbox) checkbox.checked = value;
+
+  const numberInput = row.querySelector('input[type="number"]');
+  if (numberInput && !Array.isArray(value)) numberInput.value = value;
+
+  const rangeInput = row.querySelector('input[type="range"]');
+  if (rangeInput && !Array.isArray(value)) rangeInput.value = value;
+
+  const textInput = row.querySelector('input[type="text"]');
+  if (textInput) textInput.value = value;
+
+  const select = row.querySelector('select');
+  if (select) select.value = String(value);
+
+  // Vector sub-inputs
+  if (Array.isArray(value)) {
+    const vecInputs = row.querySelectorAll('.param-vector input');
+    vecInputs.forEach((inp, i) => { if (i < value.length) inp.value = value[i]; });
+  }
+}
+
+function createParamRow(param) {
+  const row = document.createElement('div');
+  row.className = 'param-row';
+  row.id = `param-row-${param.name}`;
+
+  const currentVal = paramValues[param.name] ?? param.initial;
+
+  // Label
+  const label = document.createElement('label');
+  label.textContent = param.name;
+  label.title = param.name;
+  row.appendChild(label);
+
+  // Description
+  if (param.caption) {
+    const desc = document.createElement('span');
+    desc.className = 'param-desc';
+    desc.textContent = param.caption;
+    desc.title = param.caption;
+    row.appendChild(desc);
+  }
+
+  // Input by type
+  if (param.type === 'boolean') {
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = currentVal;
+    cb.onchange = () => setParamValue(param.name, cb.checked);
+    row.appendChild(cb);
+  } else if ('options' in param && param.options) {
+    // Enum → dropdown
+    const sel = document.createElement('select');
+    for (const opt of param.options) {
+      const o = document.createElement('option');
+      o.value = String(opt.value);
+      o.textContent = opt.name;
+      if (String(opt.value) === String(currentVal)) o.selected = true;
+      sel.appendChild(o);
+    }
+    sel.onchange = () => setParamValue(param.name, isNaN(Number(sel.value)) ? sel.value : Number(sel.value));
+    row.appendChild(sel);
+  } else if (Array.isArray(param.initial)) {
+    // Vector
+    const container = document.createElement('span');
+    container.className = 'param-vector';
+    for (let i = 0; i < param.initial.length; i++) {
+      const inp = document.createElement('input');
+      inp.type = 'number';
+      if (param.min !== undefined) { inp.min = param.min; inp.max = param.max; }
+      if (param.step !== undefined) inp.step = param.step;
+      inp.value = currentVal[i] ?? param.initial[i];
+      inp.onchange = () => {
+        const vals = [...(paramValues[param.name] || param.initial)];
+        vals[i] = Number(inp.value);
+        setParamValue(param.name, vals);
+      };
+      container.appendChild(inp);
+    }
+    row.appendChild(container);
+  } else if (param.type === 'number') {
+    // Number → range + number input
+    const rng = document.createElement('input');
+    rng.type = 'range';
+    if (param.min !== undefined) rng.min = param.min;
+    if (param.max !== undefined) rng.max = param.max;
+    if (param.step !== undefined) { rng.step = param.step; } else { rng.step = (param.max - param.min) / 100 || 1; }
+    rng.value = currentVal;
+    rng.oninput = () => {
+      setParamValue(param.name, Number(rng.value));
+    };
+    row.appendChild(rng);
+
+    const num = document.createElement('input');
+    num.type = 'number';
+    if (param.min !== undefined) num.min = param.min;
+    if (param.max !== undefined) num.max = param.max;
+    if (param.step !== undefined) num.step = param.step;
+    num.value = currentVal;
+    num.onchange = () => {
+      setParamValue(param.name, Number(num.value));
+    };
+    row.appendChild(num);
+  } else if (param.type === 'string') {
+    const txt = document.createElement('input');
+    txt.type = 'text';
+    txt.value = currentVal;
+    txt.onchange = () => setParamValue(param.name, txt.value);
+    row.appendChild(txt);
+  }
+
+  // Value display
+  const valDisplay = document.createElement('span');
+  valDisplay.className = 'param-value-display';
+  if (Array.isArray(currentVal)) {
+    valDisplay.textContent = `[${currentVal.map(v => parseFloat(v.toFixed(4))).join(', ')}]`;
+  } else if (typeof currentVal === 'number') {
+    valDisplay.textContent = parseFloat(currentVal.toFixed(4));
+  } else {
+    valDisplay.textContent = currentVal;
+  }
+  row.appendChild(valDisplay);
+
+  // Reset button
+  const resetBtn = document.createElement('button');
+  resetBtn.className = 'btn-reset-param';
+  resetBtn.textContent = '↺';
+  resetBtn.title = '重置为默认值';
+  resetBtn.onclick = (e) => { e.stopPropagation(); setParamValue(param.name, param.initial); };
+  row.appendChild(resetBtn);
+
+  return row;
+}
+
+function escapeHTML(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// ── 服务端通信 ────────────────────────────────────────────────────────────
+
 async function sendToServer(endpoint, format = null) {
   const scadSource = editor.getValue().trim();
   if (!scadSource) {
@@ -226,9 +477,28 @@ async function sendToServer(endpoint, format = null) {
   btnPng.disabled = true;
   btnExport.disabled = true;
 
+  // Build URL with -D parameters
+  const urlParams = new URLSearchParams();
+  if (endpoint === 'export' && format) urlParams.set('format', format);
+  if (endpoint === 'preview') urlParams.set('mode', 'render');
+
+  // Append modified parameter values as -D flags
+  if (currentParams && paramValues) {
+    for (const param of currentParams.parameters) {
+      const val = paramValues[param.name];
+      if (val === undefined || JSON.stringify(val) === JSON.stringify(param.initial)) continue;
+      // Format value for SCAD
+      let formatted;
+      if (typeof val === 'string') formatted = `${param.name}="${val}"`;
+      else if (Array.isArray(val)) formatted = `${param.name}=[${val.join(', ')}]`;
+      else formatted = `${param.name}=${val}`;
+      urlParams.append('D', formatted);
+    }
+  }
+
   let url = `${API}/${endpoint}`;
-  if (endpoint === 'export' && format) url += `?format=${format}`;
-  if (endpoint === 'preview') url += '?mode=render';
+  const qs = urlParams.toString();
+  if (qs) url += `?${qs}`;
 
   console.log(`%c📤 POST %c${url}%c  (%{(scadSource.length / 1024).toFixed(1)} KB SCAD)`,
     'color:#f9e2af', 'color:#89b4fa', 'color:inherit');
@@ -386,6 +656,55 @@ linear_extrude(height = 6) {
 translate([0, 0, -2])
   cube([100, 20, 4], center = true);`,
 
+  customizer: `// 参数化示例 — 支持 Customizer 参数面板
+/* [尺寸] */
+// 盒体宽度
+box_width = 30;   // [20:5:60]
+// 盒体深度
+box_depth = 20;   // [15:5:40]
+// 盒体高度
+box_height = 15;  // [10:5:40]
+// 壁厚
+wall = 2;         // [1:0.5:5]
+
+/* [孔洞] */
+// 螺丝孔径
+hole_d = 3.5;     // [2, 2.5, 3, 3.5, 4, 5]
+// 显示孔洞
+show_holes = true;
+
+/* [材质] */
+// 材质类型
+material = "PLA"; // ["PLA", "ABS", "PETG", "TPU"]
+
+/* [Hidden] */
+$fn = 60;
+
+module rounded_box(w, d, h, r) {
+  hull() {
+    for (x = [-1, 1], y = [-1, 1])
+      translate([x * (w/2 - r), y * (d/2 - r), 0])
+        cylinder(h = h, r = r);
+  }
+}
+
+difference() {
+  rounded_box(box_width, box_depth, box_height, wall);
+  translate([0, 0, wall])
+    rounded_box(box_width - 2*wall, box_depth - 2*wall,
+                box_height - wall + 1, wall/2);
+  if (show_holes) {
+    translate([box_width/2 - 3*wall, box_depth/2 - 3*wall, 0])
+      cylinder(h = box_height, d = hole_d);
+    translate([-box_width/2 + 3*wall, box_depth/2 - 3*wall, 0])
+      cylinder(h = box_height, d = hole_d);
+    translate([box_width/2 - 3*wall, -box_depth/2 + 3*wall, 0])
+      cylinder(h = box_height, d = hole_d);
+    translate([-box_width/2 + 3*wall, -box_depth/2 + 3*wall, 0])
+      cylinder(h = box_height, d = hole_d);
+  }
+}`,
+
   csg: `// 复杂 CSG 布尔运算
 $fn = 80;
 
@@ -410,13 +729,20 @@ difference() {
 document.getElementById('btn-preview').addEventListener('click', render3D);
 document.getElementById('btn-png').addEventListener('click', renderPNG);
 document.getElementById('btn-export').addEventListener('click', exportFile);
+document.getElementById('btn-reset-params').addEventListener('click', () => {
+  if (!currentParams) return;
+  for (const p of currentParams.parameters) {
+    paramValues[p.name] = p.initial;
+    updateParamRowUI(p.name, p.initial);
+  }
+});
 
 document.getElementById('btn-close-png').addEventListener('click', () => {
   document.getElementById('png-overlay').classList.remove('show');
 });
 
 Object.entries(examples).forEach(([name, code]) => {
-  const idMap = { basic: 'basic', gear: 'gear', text: 'text', csg: 'csg' };
+  const idMap = { basic: 'basic', gear: 'gear', text: 'text', csg: 'csg', customizer: 'customizer' };
   document.getElementById(`btn-example-${idMap[name]}`)?.addEventListener('click', () => {
     editor.setValue(code);
     clearError();
