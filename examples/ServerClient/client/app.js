@@ -749,6 +749,20 @@ Object.entries(examples).forEach(([name, code]) => {
   });
 });
 
+// 花瓶示例：从服务端加载 demo-vase.scad（含 BOSL2，22 个参数）
+document.getElementById('btn-example-vase')?.addEventListener('click', async () => {
+  try {
+    const res = await fetch('/demo-vase.scad');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const code = await res.text();
+    editor.setValue(code);
+    clearError();
+    // editor.setValue 已触发 change 事件，参数检测由监听器自动执行
+  } catch (err) {
+    showError(`加载 demo-vase.scad 失败: ${err.message}`);
+  }
+});
+
 // Ctrl+Enter 快捷键
 document.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {

@@ -47,6 +47,7 @@ const MIME = {
   '.svg':   'image/svg+xml',
   '.off':   'text/plain',
   '.csv':   'text/csv',
+  '.scad':  'text/plain; charset=utf-8',
 };
 
 // ── Concurrency Limiter ───────────────────────────────────────────────────
@@ -439,9 +440,14 @@ async function handleParams(req, res) {
 // ── Static file serving ───────────────────────────────────────────────────
 
 async function serveStatic(req, res, filePath) {
-  // Prevent directory traversal
+  // Prevent directory traversal (strict prefix check with path.sep)
   const normalized = path.normalize(filePath);
-  if (!normalized.startsWith(CLIENT_DIR)) {
+  // Allow client/ assets and .scad demo files from the project root
+  const isClientFile = normalized === CLIENT_DIR ||
+    normalized.startsWith(CLIENT_DIR + path.sep);
+  const isScadFile = normalized.endsWith('.scad') &&
+    (normalized === __dirname || normalized.startsWith(__dirname + path.sep));
+  if (!isClientFile && !isScadFile) {
     res.writeHead(403);
     res.end('Forbidden');
     return;
@@ -496,7 +502,9 @@ async function handleRequest(req, res) {
   // Static files
   let servePath = url.pathname;
   if (servePath === '/' || servePath === '') servePath = '/index.html';
-  const absPath = join(CLIENT_DIR, servePath);
+  // .scad demo files live in the project root (next to server.js)
+  const baseDir = servePath.endsWith('.scad') ? __dirname : CLIENT_DIR;
+  const absPath = join(baseDir, servePath);
   if (servePath.endsWith('.scad')) {
     logRequest(req);
   }

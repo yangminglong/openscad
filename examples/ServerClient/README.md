@@ -32,15 +32,15 @@ make -j$(nproc)
 
 ```bash
 cd examples/ServerClient
-OPENSCAD_BIN=../../build-cli/openscad node server.js
+HOST=0.0.0.0 OPENSCAD_BIN=../../build-cli/openscad node server.js
 ```
 
-或使用默认路径：
+或使用默认路径（仅本机可访问）：
 ```bash
 npm start
 ```
 
-服务端启动于 `http://127.0.0.1:3000`。
+服务端启动于 `http://127.0.0.1:3000`（`HOST=0.0.0.0` 时其他设备可通过局域网访问，见下文"局域网访问"章节）。
 
 ### 3. 打开客户端
 
