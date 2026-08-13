@@ -85,6 +85,8 @@ EXPOSE 3000
 
 ENV HOST=0.0.0.0
 ENV PORT=3000
+ENV QT_QPA_PLATFORM=offscreen
+ENV DISPLAY=:99
 ENV OPENSCADPATH=/usr/local/share/openscad/libraries
 ENV OPENSCAD_BIN=/usr/local/bin/openscad
 
