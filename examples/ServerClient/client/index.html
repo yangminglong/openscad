@@ -5,9 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>OpenSCAD 服务端渲染 Demo</title>
 
-<!-- CodeMirror editor -->
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.css">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/theme/material-darker.min.css">
+<!-- CodeMirror editor (本地 vendor，离线可用) -->
+<link rel="stylesheet" href="/vendor/codemirror/codemirror.css">
+<link rel="stylesheet" href="/vendor/codemirror/material-darker.css">
 
 <!-- Our styles -->
 <link rel="stylesheet" href="/style.css">
@@ -34,6 +34,7 @@
 
     <button id="btn-preview" class="btn btn-primary">▶ 3D 预览</button>
     <button id="btn-png" class="btn btn-default">🖼 PNG</button>
+    <button id="btn-filament" class="btn btn-filament hidden">🎨 配置耗材</button>
     <button id="btn-export" class="btn btn-export">⬇ 导出</button>
 
     <span id="status" class="status-idle">● 就绪</span>
@@ -96,17 +97,34 @@
       </div>
       <img id="png-result" alt="PNG 预览">
     </div>
+
+    <!-- Filament Config Modal (3MF 导出耗材配置) -->
+    <div id="filament-modal-overlay">
+      <div id="filament-modal">
+        <h3>🎨 配置耗材（3MF v4 导出）</h3>
+        <div class="filament-desc">
+          每个模型颜色对应一个挤出机。调整顺序可改变挤出顺序；
+          名称写入 3MF 供切片软件识别（OrcaSlicer/BambuStudio paint_color MMU 分割）。
+        </div>
+        <div id="filament-rows"></div>
+        <div class="filament-modal-footer">
+          <button class="btn btn-default" id="btn-filament-reset">↺ 重置</button>
+          <button class="btn btn-default" id="btn-filament-cancel">取消</button>
+          <button class="btn btn-export" id="btn-filament-save">保存</button>
+        </div>
+      </div>
+    </div>
   </section>
 </main>
 
-<!-- ── Dependencies ──────────────────────────────────────────────── -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/clike/clike.min.js"></script>
+<!-- ── Dependencies (本地 vendor，离线可用) ─────────────────────────── -->
+<script src="/vendor/codemirror/codemirror.js"></script>
+<script src="/vendor/codemirror/clike.js"></script>
 <script type="importmap">
 {
   "imports": {
-    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    "three": "/vendor/three/three.module.js",
+    "three/addons/": "/vendor/three/"
   }
 }
 </script>

@@ -124,8 +124,8 @@ function animate() {
 }
 animate();
 
-// ── 构建 STL 模型 ────────────────────────────────────────────────────────
-function loadSTL(buffer) {
+// ── 模型容器管理 ──────────────────────────────────────────────────────────
+function resetModelGroup() {
   // 清理旧模型
   modelGroup.traverse(c => {
     if (c.geometry) c.geometry.dispose();
@@ -141,6 +141,122 @@ function loadSTL(buffer) {
   infoEl.textContent = '';
   legendEl.innerHTML = '';
   legendEl.style.display = 'none';
+  placeholder.style.display = 'none';
+}
+
+// ── binmesh 解析（与 examples/web 相同的布局，见 src/wasm/binary_mesh_export.cc）──
+//
+// u32×4 头 {nv, nf, nc, ni} | pos f32×nv×3 | idx u32×ni | 面色 i32×nf | 调色板 f32×nc×4
+// 直接在 fetch 返回的 ArrayBuffer 上建 typed array 视图，零解析开销。
+function parseBinaryMesh(buf) {
+  if (buf.byteLength < 16) return null;
+  const v = new DataView(buf, 0, 16);
+  const nv = v.getUint32(0, true), nf = v.getUint32(4, true),
+        nc = v.getUint32(8, true), ni = v.getUint32(12, true);
+  const expected = 16 + nv * 12 + ni * 4 + nf * 4 + nc * 16;
+  if (expected > buf.byteLength) return null;  // 结构不合法 → 视为非 binmesh
+  let off = 16;
+  const pos = new Float32Array(buf, off, nv * 3); off += nv * 12;
+  const idx = new Uint32Array(buf, off, ni); off += ni * 4;
+  const ci = new Int32Array(buf, off, nf); off += nf * 4;
+  const pal = new Float32Array(buf, off, nc * 4);
+  return { nv, nf, nc, pos, idx, ci, pal };
+}
+
+// ── 构建 binmesh 模型（单色零拷贝 / 多色按面色分组）────────────────────────
+// 返回 false 表示数据不是合法 binmesh（调用方回退 STL）
+function loadBinaryMesh(buffer) {
+  const data = parseBinaryMesh(buffer);
+  if (!data) return false;
+
+  resetModelGroup();
+  const { nf, nc, pos, idx, ci, pal } = data;
+  if (nf === 0) {
+    infoEl.textContent = '模型为空';
+    return true;
+  }
+
+  // 材质：平滑着色（与 STL 路径一致）。flatShading 会让曲面呈逐面色块，
+  // 默认颜色视觉上会"变深/花掉"，故保留平滑法线
+  const defaultColor = new THREE.Color(0xf9d72c);
+  const makeMaterial = (r, g, b) => new THREE.MeshPhongMaterial({
+    color: new THREE.Color(r, g, b), specular: 0x111111, shininess: 30,
+    side: THREE.DoubleSide,
+  });
+
+  // 按面色分组：ci[fi] → 面列表
+  const groups = new Map();
+  for (let fi = 0; fi < nf; fi++) {
+    const c = ci[fi];
+    if (!groups.has(c)) groups.set(c, []);
+    groups.get(c).push(fi);
+  }
+
+  let totalTris = 0;
+  previewColorMeshes = [];
+  for (const [colorIdx, faces] of groups) {
+    let geo;
+    if (groups.size === 1 && faces.length === nf) {
+      // 单色快路径：position/index 直接零拷贝视图，无顶点重映射
+      geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      geo.setIndex(new THREE.BufferAttribute(idx, 1));
+      geo.computeVertexNormals();
+    } else {
+      // 多色：索引重映射到分组局部顶点（O(n) 拷贝，与 examples/web 一致）
+      geo = new THREE.BufferGeometry();
+      const verts = [], indices = [], idxMap = new Map();
+      let vi = 0;
+      for (const fi of faces) {
+        for (let k = 0; k < 3; k++) {
+          const oi = idx[fi * 3 + k];
+          if (!idxMap.has(oi)) { idxMap.set(oi, vi); verts.push(pos[oi * 3], pos[oi * 3 + 1], pos[oi * 3 + 2]); vi++; }
+          indices.push(idxMap.get(oi));
+        }
+      }
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+      geo.setIndex(indices);
+      geo.computeVertexNormals();
+    }
+
+    let r = defaultColor.r, g = defaultColor.g, b = defaultColor.b;
+    if (colorIdx >= 0 && colorIdx < nc) { r = pal[colorIdx * 4]; g = pal[colorIdx * 4 + 1]; b = pal[colorIdx * 4 + 2]; }
+    const mesh = new THREE.Mesh(geo, makeMaterial(r, g, b));
+    modelGroup.add(mesh);
+    previewColorMeshes.push({ mesh, paletteIdx: colorIdx });
+    totalTris += faces.length;
+  }
+
+  fitCameraToModel();
+  infoEl.textContent = `顶点 ${pos.length / 3}  ·  三角面 ${totalTris}  ·  颜色 ${nc}  ·  binmesh`;
+
+  // 保存调色板，供 3MF 耗材配置与导出使用
+  lastPalette = pal;
+  document.getElementById('btn-filament').classList.toggle('hidden', nc === 0);
+
+  // 已保存的耗材配置回馈预览着色，并重建图例
+  applyFilamentColorsToPreview();
+  return true;
+}
+
+// 将耗材配置应用到当前预览网格（保存/重置/渲染后调用）：
+// 未配置时显示模型调色板本色；配置后按耗材对话框的颜色显示，
+// 并同步图例——所见即 3MF 导出所用颜色。
+function applyFilamentColorsToPreview() {
+  let lhtml = '';
+  for (const { mesh, paletteIdx } of previewColorMeshes) {
+    const cfg = filamentConfig && filamentConfig[paletteIdx];
+    const hex = cfg ? cfg.color : paletteHex(paletteIdx);
+    mesh.material.color.set(hex);
+    lhtml += `<div class="item"><span class="swatch" style="background:${hex}"></span><span class="hex">${hex}</span></div>`;
+  }
+  legendEl.innerHTML = lhtml;
+  legendEl.style.display = lhtml ? 'block' : 'none';
+}
+
+// ── 构建 STL 模型（回退路径）──────────────────────────────────────────────
+function loadSTL(buffer) {
+  resetModelGroup();
 
   const loader = new STLLoader();
   const geometry = loader.parse(buffer);
@@ -169,8 +285,16 @@ function loadSTL(buffer) {
   const mesh = new THREE.Mesh(geometry, material);
   modelGroup.add(mesh);
 
-  // 适配相机
+  fitCameraToModel();
+
+  // 显示统计信息
+  infoEl.textContent = `顶点 ${numVertices}  ·  三角面 ${Math.round(numFaces)}  ·  STL`;
+}
+
+// ── 相机适配 ──────────────────────────────────────────────────────────────
+function fitCameraToModel() {
   const box = new THREE.Box3().setFromObject(modelGroup);
+  if (box.isEmpty()) return;
   const center = box.getCenter(new THREE.Vector3());
   const size = box.getSize(new THREE.Vector3()).length();
   controls.target.copy(center);
@@ -180,12 +304,109 @@ function loadSTL(buffer) {
     center.z + size * 0.8
   );
   controls.update();
+}
 
-  // 隐藏占位符
-  placeholder.style.display = 'none';
+// ── 3MF 耗材配置（MMU 颜色分割）─────────────────────────────────────────────
+// filamentConfig[i] = { name, type: 'solid'|'gradient'|'glow', color: '#RRGGBB' }
+// 序号与模型调色板索引一一对应（挤出机 i ← 模型第 i 种颜色）。
+// 服务端按顺序拼成 -O export-3mf/filament-colors=Name|serialize 传给 CLI。
+let lastPalette = null;       // binmesh 调色板 Float32Array（渲染后有效）
+let filamentConfig = null;    // null = 未配置（导出时走 CLI 自动检测）
+let previewColorMeshes = [];  // [{ mesh, paletteIdx }] — 供耗材配置回馈预览着色
 
-  // 显示统计信息
-  infoEl.textContent = `顶点 ${numVertices}  ·  三角面 ${Math.round(numFaces)}  ·  STL`;
+function paletteHex(i) {
+  const r = Math.round(lastPalette[i * 4] * 255).toString(16).padStart(2, '0').toUpperCase();
+  const g = Math.round(lastPalette[i * 4 + 1] * 255).toString(16).padStart(2, '0').toUpperCase();
+  const b = Math.round(lastPalette[i * 4 + 2] * 255).toString(16).padStart(2, '0').toUpperCase();
+  return '#' + r + g + b;
+}
+
+function defaultConfig() {
+  if (!lastPalette) return [];
+  const nc = lastPalette.length / 4;
+  return Array.from({ length: nc }, (_, i) => ({
+    name: `PLA ${i + 1}`,
+    type: 'solid',
+    color: paletteHex(i),
+  }));
+}
+
+function serializeFilament(cfg) {
+  const hex = (cfg.color || '#FF0000') + 'FF';
+  if (cfg.type === 'gradient') return `gradient:${hex},#FFFFFFFF;angle:0`;
+  if (cfg.type === 'glow')     return `glow:${hex},#0000FFFF`;
+  return hex;
+}
+
+function openFilamentDialog() {
+  if (!lastPalette) return;
+  const overlay = document.getElementById('filament-modal-overlay');
+  const rowsEl = document.getElementById('filament-rows');
+  const draft = JSON.parse(JSON.stringify(filamentConfig || defaultConfig()));
+
+  const render = () => {
+    rowsEl.innerHTML = '';
+    draft.forEach((cfg, i) => {
+      const row = document.createElement('div');
+      row.className = 'filament-row';
+      row.innerHTML = `
+        <span class="swatch" style="background:${paletteHex(i)}"></span>
+        <span class="extruder-tag">挤出机 ${i + 1}</span>
+        <input class="fname" value="${escapeHTML(cfg.name)}" data-i="${i}">
+        <input type="color" value="${cfg.color}" data-i="${i}">
+        <select data-i="${i}">
+          <option value="solid" ${cfg.type === 'solid' ? 'selected' : ''}>纯色</option>
+          <option value="gradient" ${cfg.type === 'gradient' ? 'selected' : ''}>渐变（→白）</option>
+          <option value="glow" ${cfg.type === 'glow' ? 'selected' : ''}>夜光（→亮蓝）</option>
+        </select>
+        <button class="btn-sm" data-up="${i}" ${i === 0 ? 'disabled' : ''}>↑</button>
+        <button class="btn-sm" data-down="${i}" ${i === draft.length - 1 ? 'disabled' : ''}>↓</button>`;
+      rowsEl.appendChild(row);
+    });
+
+    rowsEl.querySelectorAll('.fname').forEach(inp => {
+      inp.onchange = () => { draft[+inp.dataset.i].name = inp.value.trim() || `PLA ${+inp.dataset.i + 1}`; };
+    });
+    rowsEl.querySelectorAll('input[type="color"]').forEach(inp => {
+      inp.oninput = () => { draft[+inp.dataset.i].color = inp.value; };
+    });
+    rowsEl.querySelectorAll('select').forEach(sel => {
+      sel.onchange = () => { draft[+sel.dataset.i].type = sel.value; };
+    });
+    rowsEl.querySelectorAll('[data-up]').forEach(btn => {
+      btn.onclick = () => {
+        const i = +btn.dataset.up;
+        [draft[i - 1], draft[i]] = [draft[i], draft[i - 1]];
+        render();
+      };
+    });
+    rowsEl.querySelectorAll('[data-down]').forEach(btn => {
+      btn.onclick = () => {
+        const i = +btn.dataset.down;
+        [draft[i], draft[i + 1]] = [draft[i + 1], draft[i]];
+        render();
+      };
+    });
+  };
+  render();
+  overlay.classList.add('show');
+
+  document.getElementById('btn-filament-save').onclick = () => {
+    filamentConfig = draft;
+    applyFilamentColorsToPreview();  // 立即回馈预览着色
+    overlay.classList.remove('show');
+    document.getElementById('status').textContent =
+      `耗材配置已保存 (${filamentConfig.length} 个挤出机) · 预览与 3MF 导出生效`;
+  };
+  document.getElementById('btn-filament-cancel').onclick = () => {
+    overlay.classList.remove('show');  // 放弃草稿，保留已保存配置
+  };
+  document.getElementById('btn-filament-reset').onclick = () => {
+    filamentConfig = null;  // 恢复 CLI 自动检测
+    applyFilamentColorsToPreview();  // 预览恢复模型本色
+    overlay.classList.remove('show');
+    document.getElementById('status').textContent = '耗材配置已重置 · 预览恢复模型本色，3MF 导出使用自动检测';
+  };
 }
 
 // ── 服务端通信 ───────────────────────────────────────────────────────────
@@ -459,7 +680,7 @@ function escapeHTML(str) {
 
 // ── 服务端通信 ────────────────────────────────────────────────────────────
 
-async function sendToServer(endpoint, format = null) {
+async function sendToServer(endpoint, format = null, extraParams = null) {
   const scadSource = editor.getValue().trim();
   if (!scadSource) {
     showError('编辑器为空，请先编写 SCAD 代码');
@@ -479,8 +700,9 @@ async function sendToServer(endpoint, format = null) {
 
   // Build URL with -D parameters
   const urlParams = new URLSearchParams();
-  if (endpoint === 'export' && format) urlParams.set('format', format);
+  if ((endpoint === 'export' || endpoint === 'render') && format) urlParams.set('format', format);
   if (endpoint === 'preview') urlParams.set('mode', 'render');
+  if (extraParams) for (const [k, v] of extraParams) urlParams.append(k, v);
 
   // Append modified parameter values as -D flags
   if (currentParams && paramValues) {
@@ -538,10 +760,16 @@ async function sendToServer(endpoint, format = null) {
 }
 
 // ── 3D 预览 ──────────────────────────────────────────────────────────────
+// 首选 binmesh（体积小/零解析/含每面颜色），失败自动回退 STL
 async function render3D() {
   try {
-    const data = await sendToServer('render');
-    loadSTL(data);
+    try {
+      const data = await sendToServer('render', 'binmesh');
+      if (loadBinaryMesh(data)) return;
+    } catch { /* binmesh 不可用（老服务端/格式异常），回退 STL */ }
+
+    const stlData = await sendToServer('render', 'stl');
+    loadSTL(stlData);
   } catch { /* 错误已显示 */ }
 }
 
@@ -566,7 +794,12 @@ async function renderPNG() {
 async function exportFile() {
   const format = document.getElementById('export-format').value;
   try {
-    const data = await sendToServer('export', format);
+    // 3MF 导出携带耗材配置（?F=Name|serialize，服务端转 -O export-3mf/filament-colors）
+    let extra = null;
+    if (format === '3mf' && filamentConfig && filamentConfig.length) {
+      extra = filamentConfig.map(cfg => ['F', `${cfg.name}|${serializeFilament(cfg)}`]);
+    }
+    const data = await sendToServer('export', format, extra);
 
     const exts = {
       stl: 'stl', '3mf': '3mf', off: 'off', amf: 'amf',
@@ -729,6 +962,7 @@ difference() {
 document.getElementById('btn-preview').addEventListener('click', render3D);
 document.getElementById('btn-png').addEventListener('click', renderPNG);
 document.getElementById('btn-export').addEventListener('click', exportFile);
+document.getElementById('btn-filament').addEventListener('click', openFilamentDialog);
 document.getElementById('btn-reset-params').addEventListener('click', () => {
   if (!currentParams) return;
   for (const p of currentParams.parameters) {

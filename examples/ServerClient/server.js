@@ -21,6 +21,7 @@ import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
+import { gzipSync } from 'node:zlib';
 
 // ── Configuration ─────────────────────────────────────────────────────────
 
@@ -31,6 +32,7 @@ const OPENSCAD_BIN = process.env.OPENSCAD_BIN || join(__dirname, '../../build-cl
 const RENDER_TIMEOUT_MS = parseInt(process.env.RENDER_TIMEOUT || '60000', 10);  // 60s
 const MAX_CONCURRENT = parseInt(process.env.MAX_CONCURRENT || '4', 10);
 const MAX_BODY_SIZE = parseInt(process.env.MAX_BODY_SIZE || `${2 * 1024 * 1024}`, 10); // 2MB
+const ENABLE_GZIP = process.env.ENABLE_GZIP !== '0';  // 响应 gzip 压缩（按 Accept-Encoding 协商）
 const CLIENT_DIR = join(__dirname, 'client');
 const WORK_DIR = join(tmpdir(), 'openscad-server-demo');
 
@@ -43,6 +45,7 @@ const MIME = {
   '.json':  'application/json',
   '.png':   'image/png',
   '.stl':   'model/stl',
+  '.binmesh': 'application/octet-stream',
   '.3mf':   'application/vnd.ms-package.3dmanufacturing-3dmodel+xml',
   '.svg':   'image/svg+xml',
   '.off':   'text/plain',
@@ -200,13 +203,41 @@ function json(res, statusCode, data) {
   res.end(body);
 }
 
+// ── Binary response (gzip 协商) ────────────────────────────────────────────
+//
+// 按 HTTP 规范协商：浏览器 fetch 总是发送 Accept-Encoding: gzip → 自动压缩；
+// curl 默认不发 → 返回原始数据，零感知。zip/png/pdf 等已压缩格式跳过。
+
+function maybeGzip(req, buf) {
+  const accepts = (req.headers['accept-encoding'] || '').toLowerCase();
+  if (ENABLE_GZIP && accepts.includes('gzip') && buf.length > 1024) {
+    return { data: gzipSync(buf), encoding: 'gzip' };
+  }
+  return { data: buf, encoding: null };
+}
+
+function sendBinary(res, req, buf, contentType, filename, gzipEligible = true) {
+  const { data, encoding } = gzipEligible ? maybeGzip(req, buf) : { data: buf, encoding: null };
+  const headers = {
+    'Content-Type': contentType,
+    'Content-Length': data.length,
+    'Content-Disposition': `attachment; filename="${filename}"`,
+    'Access-Control-Allow-Origin': '*',
+  };
+  if (gzipEligible) headers['Vary'] = 'Accept-Encoding';
+  if (encoding) headers['Content-Encoding'] = encoding;
+  res.writeHead(200, headers);
+  res.end(data);
+}
+
 // ── Health check ──────────────────────────────────────────────────────────
 
 async function handleHealth(req, res) {
   try {
     // Verify the openscad binary exists and works
-    const { stdout } = await runOpenSCAD(['--version'], null, 5000);
-    const version = stdout.toString('utf8').trim().split('\n')[0];
+    // 注意: openscad 的版本信息输出到 stderr（stdout 为空）
+    const { stdout, stderr } = await runOpenSCAD(['--version'], null, 5000);
+    const version = (stdout.toString('utf8') + stderr.toString('utf8')).trim().split('\n')[0];
     json(res, 200, { status: 'ok', version, binary: OPENSCAD_BIN, concurrency: { running, max: MAX_CONCURRENT } });
   } catch (err) {
     json(res, 503, { status: 'error', message: `openscad binary not usable: ${err.message}`, binary: OPENSCAD_BIN });
@@ -224,14 +255,24 @@ function extractDVars(url) {
   return args;
 }
 
-// ── Render (STL binary) ───────────────────────────────────────────────────
+// ── Filament helper: extract ?F=Name|#RRGGBBAA for 3MF v4 MMU export ────────
+// 与 CLI 的 -O export-3mf/filament-colors 同格式，多个条目换行分隔：
+//   ?F=PLA|#FF0000FF&F=PETG|#0000FFFF
+//   → -O 'export-3mf/filament-colors=PLA|#FF0000FF\nPETG|#0000FFFF'
+
+function extractFilamentArgs(url) {
+  const specs = url.searchParams.getAll('F');
+  if (specs.length === 0) return [];
+  return ['-O', `export-3mf/filament-colors=${specs.join('\n')}`];
+}
+
+// ── Render (binmesh / STL binary) ──────────────────────────────────────────
 
 async function handleRender(req, res) {
   const t0 = performance.now();
   await acquireSlot();
   const ws = await jobWorkspace('render');
   const inputPath = join(ws, 'model.scad');
-  const outputPath = join(ws, 'output.stl');
 
   try {
     const body = await readBody(req);
@@ -240,7 +281,7 @@ async function handleRender(req, res) {
     const scadSource = body.toString('utf8');
 
     if (!scadSource.trim()) {
-      releaseSlot();
+      // finally 块统一释放并发槽位，勿在此处重复 releaseSlot()
       return json(res, 400, { error: 'Empty SCAD source' });
     }
 
@@ -249,20 +290,26 @@ async function handleRender(req, res) {
     await writeFile(inputPath, source, 'utf8');
 
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+    // 默认 binmesh（索引化二进制网格，含每面颜色，体积约为 STL 的 1/2.3）；
+    // ?format=stl 回退到 binary STL（老客户端/外部工具兼容）
+    const fmt = url.searchParams.get('format') || 'binmesh';
+    const validFormats = ['binmesh', 'stl'];
+    if (!validFormats.includes(fmt)) {
+      // finally 块统一释放并发槽位，勿在此处重复 releaseSlot()
+      return json(res, 400, { error: `Unknown format: ${fmt}. Valid: ${validFormats.join(', ')}` });
+    }
+
     const dArgs = extractDVars(url);
-    const { stdout } = await runOpenSCAD(['-o', outputPath, ...dArgs, inputPath]);
+    const outputPath = join(ws, `output.${fmt}`);
+    const exportFormat = fmt === 'stl' ? 'binstl' : 'binmesh';
+    await runOpenSCAD(['-o', outputPath, '--export-format', exportFormat, ...dArgs, inputPath]);
 
-    const stlData = await readFile(outputPath);
+    const meshData = await readFile(outputPath);
 
-    logDone(req, stlData, Math.round(performance.now() - t0));
+    logDone(req, meshData, Math.round(performance.now() - t0));
 
-    res.writeHead(200, {
-      'Content-Type': 'model/stl',
-      'Content-Length': stlData.length,
-      'Content-Disposition': 'attachment; filename="model.stl"',
-      'Access-Control-Allow-Origin': '*',
-    });
-    res.end(stlData);
+    const contentType = MIME[`.${fmt}`] || 'application/octet-stream';
+    sendBinary(res, req, meshData, contentType, `model.${fmt}`);
   } catch (err) {
     logFail(req, err, Math.round(performance.now() - t0));
     json(res, 500, { error: err.message });
@@ -289,7 +336,7 @@ async function handlePreview(req, res) {
     const scadSource = body.toString('utf8');
 
     if (!scadSource.trim()) {
-      releaseSlot();
+      // finally 块统一释放并发槽位，勿在此处重复 releaseSlot()
       return json(res, 400, { error: 'Empty SCAD source' });
     }
 
@@ -349,7 +396,7 @@ async function handleExport(req, res) {
     const scadSource = body.toString('utf8');
 
     if (!scadSource.trim()) {
-      releaseSlot();
+      // finally 块统一释放并发槽位，勿在此处重复 releaseSlot()
       return json(res, 400, { error: 'Empty SCAD source' });
     }
 
@@ -363,7 +410,7 @@ async function handleExport(req, res) {
     // Validate format
     const validFormats = ['stl', '3mf', 'off', 'amf', 'svg', 'dxf', 'png', 'pdf', 'csg', 'ast', 'term', 'param'];
     if (!validFormats.includes(fmt)) {
-      releaseSlot();
+      // finally 块统一释放并发槽位，勿在此处重复 releaseSlot()
       return json(res, 400, { error: `Unknown format: ${fmt}. Valid: ${validFormats.join(', ')}` });
     }
 
@@ -374,6 +421,8 @@ async function handleExport(req, res) {
     if (fmt === '3mf') {
       // Use v4 exporter (OrcaSlicer-compatible with paint_color MMU tags)
       args.push('--export-format', '3mf_v4');
+      // 耗材配置（可选）：?F=Name|#RRGGBBAA 重复传递，控制 MMU 颜色分割与命名
+      args.push(...extractFilamentArgs(url));
     }
     if (fmt === 'png') {
       args.push('--render', '--viewall', '--autocenter', '--imgsize=1024,768');
@@ -387,13 +436,9 @@ async function handleExport(req, res) {
 
     const contentType = MIME[`.${ext}`] || 'application/octet-stream';
 
-    res.writeHead(200, {
-      'Content-Type': contentType,
-      'Content-Length': data.length,
-      'Content-Disposition': `attachment; filename="model.${ext}"`,
-      'Access-Control-Allow-Origin': '*',
-    });
-    res.end(data);
+    // zip(3mf)/png/pdf 已是压缩格式，跳过 gzip
+    const gzipEligible = !['3mf', 'png', 'pdf'].includes(ext);
+    sendBinary(res, req, data, contentType, `model.${ext}`, gzipEligible);
   } catch (err) {
     logFail(req, err, Math.round(performance.now() - t0));
     json(res, 500, { error: err.message });

@@ -483,6 +483,98 @@ select:focus { outline: none; border-color: var(--blue); }
   margin-left: auto;
 }
 
+/* ── Filament Config Modal ───────────────────────────────────── */
+#filament-modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 100;
+  align-items: center;
+  justify-content: center;
+}
+#filament-modal-overlay.show { display: flex; }
+
+#filament-modal {
+  background: var(--mantle);
+  border: 1px solid var(--surface1);
+  border-radius: 12px;
+  padding: 22px;
+  min-width: 480px;
+  max-width: 620px;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+#filament-modal h3 { font-size: 1rem; margin-bottom: 8px; color: var(--text); }
+.filament-desc {
+  font-size: 0.78rem;
+  color: var(--subtext0);
+  margin-bottom: 14px;
+  line-height: 1.6;
+}
+.filament-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--surface0);
+}
+.filament-row .swatch {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: 1px solid var(--surface2);
+  flex-shrink: 0;
+}
+.filament-row .fname {
+  flex: 1;
+  background: var(--surface0);
+  border: 1px solid var(--surface1);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 6px 10px;
+  font-size: 0.82rem;
+  min-width: 120px;
+}
+.filament-row .fname:focus { border-color: var(--blue); outline: none; }
+.filament-row input[type="color"] {
+  width: 30px;
+  height: 26px;
+  border: 1px solid var(--surface1);
+  border-radius: var(--radius);
+  background: var(--surface0);
+  cursor: pointer;
+  padding: 1px;
+}
+.filament-row select {
+  background: var(--surface0);
+  border: 1px solid var(--surface1);
+  border-radius: var(--radius);
+  color: var(--text);
+  padding: 6px 8px;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.filament-row .extruder-tag {
+  font-size: 0.7rem;
+  background: var(--surface1);
+  color: var(--subtext1);
+  padding: 3px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.filament-row .btn-sm:disabled { opacity: 0.25; cursor: not-allowed; }
+.filament-modal-footer {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--surface0);
+}
+.filament-modal-footer .btn { padding: 8px 18px; }
+
 /* ── Responsive ──────────────────────────────────────────────── */
 @media (max-width: 800px) {
   #main { flex-direction: column; }

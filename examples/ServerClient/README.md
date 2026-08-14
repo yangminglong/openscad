@@ -7,7 +7,7 @@
 │                                              │   │                       │
 │  CodeMirror 编辑器 ── POST /api/render ──────►│   │  openscad CLI          │
 │  Customizer 参数面板 ── ?D=var=val ──────────►│   │  (HEADLESS 构建)       │
-│  Three.js STL 预览  ◄── binary STL ──────────►│   │                        │
+│  Three.js 多色预览  ◄── binmesh (gzip 协商) ──│   │                        │
 │  PNG 预览           ◄── image/png ───────────►│   │  进程池                 │
 │  文件导出下载        ◄── file ───────────────►│   │  超时控制               │
 │                                              │   │                        │
@@ -51,10 +51,13 @@ npm start
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | `GET` | `/api/health` | 服务状态、版本、并发数 |
-| `POST` | `/api/render` | SCAD 源码 → 二进制 STL（3D 网格） |
+| `POST` | `/api/render?format=binmesh\|stl` | SCAD 源码 → 索引化二进制网格（默认 `binmesh`，含每面颜色；`stl` 为兼容回退） |
 | `POST` | `/api/preview` | SCAD 源码 → PNG 图片 |
-| `POST` | `/api/export?format=<格式>` | SCAD 源码 → 任意导出格式 |
+| `POST` | `/api/export?format=<格式>&F=<耗材规格>` | SCAD 源码 → 任意导出格式；`format=3mf` 时可用重复 `?F=Name\|#RRGGBBAA` 配置耗材（MMU 颜色分割与命名） |
 | `POST` | `/api/params` | SCAD 源码 → Customizer 参数定义 JSON |
+
+> 二进制响应（binmesh/STL/文本类导出）支持 gzip：按 `Accept-Encoding` 协商，
+> 浏览器自动压缩（binmesh 实测约 4×↓），curl 需加 `--compressed`。
 
 所有渲染/导出接口均支持查询参数 `?D=var=val` 注入变量，可多次使用：
 ```
@@ -64,14 +67,22 @@ POST /api/render?D=width=50&D=material="ABS"
 ### curl 命令行等价示例
 
 ```bash
-# STL 渲染
-curl -X POST --data-binary @demo-box.scad http://127.0.0.1:3000/api/render -o result.stl
+# 3D 网格（默认 binmesh：索引化 + 每面颜色；加 --compressed 走 gzip）
+curl -X POST --data-binary @demo-box.scad http://127.0.0.1:3000/api/render -o result.binmesh
+
+# 3D 网格（STL 兼容格式）
+curl -X POST --data-binary @demo-box.scad 'http://127.0.0.1:3000/api/render?format=stl' -o result.stl
 
 # PNG 预览
 curl -X POST --data-binary @demo-box.scad http://127.0.0.1:3000/api/preview -o result.png
 
-# 3MF 导出
+# 3MF 导出（3mf_v4，OrcaSlicer paint_color MMU 分割）
 curl -X POST --data-binary @demo-box.scad 'http://127.0.0.1:3000/api/export?format=3mf' -o result.3mf
+
+# 3MF 导出 + 耗材配置（?F=Name|#RRGGBBAA 重复传递，顺序=挤出机顺序）
+curl -X POST --data-binary @demo-box.scad \
+  'http://127.0.0.1:3000/api/export?format=3mf&F=PLA%20Red%7C%23FF0000FF&F=PETG%20Blue%7C%230000FFFF' \
+  -o result.3mf
 
 # 健康检查
 curl http://127.0.0.1:3000/api/health
@@ -241,6 +252,7 @@ if (param.type === 'string')        → Text input
 | `RENDER_TIMEOUT` | `60000` | 单次渲染最大耗时（毫秒） |
 | `MAX_CONCURRENT` | `4` | 最大并发渲染数 |
 | `MAX_BODY_SIZE` | `2097152` | SCAD 源码最大体积（2MB） |
+| `ENABLE_GZIP` | `1` | 二进制响应 gzip 压缩（按 Accept-Encoding 协商；`0` 关闭） |
 
 ## OpenSCAD CLI 运行时参数
 
@@ -265,6 +277,7 @@ openscad [options] file.scad
 
 | 格式 | 用途 |
 |------|------|
+| `binmesh` | 索引化二进制网格（`/api/render` 默认：体积约为 STL 的 1/2.3，含每面颜色 + 调色板） |
 | `stl` | 3D 网格（默认 ASCII，推荐显式指定 `--export-format binstl`） |
 | `off` | OFF 3D 网格 |
 | `wrl` | VRML |
@@ -372,8 +385,8 @@ openscad [options] file.scad
 // /api/params (参数定义提取)
 ['-o', outputPath, '--export-format=param', inputPath]
 
-// /api/render (STL)
-['-o', outputPath, ...dArgs, inputPath]
+// /api/render (binmesh 默认 / ?format=stl 回退)
+['-o', outputPath, '--export-format', 'binmesh', ...dArgs, inputPath]
 
 // /api/preview (PNG)
 ['-o', outputPath, ...dArgs, '--render', '--viewall', '--autocenter',
@@ -492,7 +505,10 @@ ServerClient/
 ├── client/
 │   ├── index.html      # Web 前端页面
 │   ├── app.js          # 客户端逻辑（Three.js + CodeMirror + 参数面板）
-│   └── style.css       # Catppuccin Mocha 深色主题
+│   ├── style.css       # Catppuccin Mocha 深色主题
+│   └── vendor/         # 本地化前端依赖（离线可用）
+│       ├── codemirror/ # CodeMirror 5.65.18 (js/css/theme/clike)
+│       └── three/      # Three.js 0.160 (module + STLLoader + OrbitControls)
 ├── demo-box.scad       # 示例：带孔圆角盒体
 ├── demo-gear.scad      # 示例：参数化齿轮
 ├── demo-csg.scad       # 示例：复杂 CSG 布尔运算
