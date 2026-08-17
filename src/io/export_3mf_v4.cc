@@ -648,6 +648,27 @@ static std::string buildProjectSettingsConfig(
       }
     }
 
+    // flush 相关键与耗材数对齐 (与 3mfsdk 的 3MFExport.cpp 第5步一致)
+    // 模板中的 flush_volumes_matrix(1个元素)/flush_volumes_vector(2个元素)/
+    // flush_volumes_chan_multipliers(4个元素)是固定尺寸, 上面的扩展循环不会处理它们。
+    // 直接写入会导致切片器按 sqrt(matrix.size()) 推导耗材数后以下标访问矩阵时越界
+    // (N根耗材时矩阵只有1个元素)。
+    // - flush_volumes_matrix: 移除字段, 切片器加载时用内置 4×4 默认矩阵补齐,
+    //   尺寸合法不会越界; CLI 在耗材数≠4 时还会按工程颜色重算真实矩阵。
+    //   注意不要写成空数组: 空数组尺寸 0 会进入切片流程, 同样导致越界。
+    // - flush_volumes_vector / flush_volumes_chan_multipliers: 重建为 N 个元素。
+    {
+      cfg.erase("flush_volumes_matrix");
+
+      nlohmann::json vec = nlohmann::json::array();
+      for (size_t i = 0; i < n_filaments; ++i) vec.push_back("140");
+      cfg["flush_volumes_vector"] = vec;
+
+      nlohmann::json mult = nlohmann::json::array();
+      for (size_t i = 0; i < n_filaments; ++i) mult.push_back("1");
+      cfg["flush_volumes_chan_multipliers"] = mult;
+    }
+
     return cfg.dump(4);
   } catch (const std::exception& e) {
     LOG(message_group::Export_Error,
