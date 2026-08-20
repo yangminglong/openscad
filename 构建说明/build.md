@@ -6,6 +6,7 @@
 |---|---|---|---|
 | CLI (glibc) | `build-cli/` | 动态链接，本地开发/测试 | `build-cli/openscad` |
 | CLI (musl) | `build-cli-musl/` | 静态链接，可移植发布 | `openscad-musl-*.tar.gz` |
+| Windows MSVC | `build/` | Visual Studio 2022 无 GUI 构建 | `build/Debug/openscad.exe`、`build/Release/openscad.exe` |
 | WASM | `build-web/` | 浏览器运行 | `openscad.js` + `openscad.wasm` |
 
 ## 快速开始
@@ -21,6 +22,43 @@ docker build -t openscad-musl -f build-cli-musl/Dockerfile .
 # WASM — 浏览器使用
 ./scripts/wasm-base-docker-run.sh emcmake cmake -B build-web -S . -DCMAKE_BUILD_TYPE=Release -DEXPERIMENTAL=ON
 ./scripts/wasm-base-docker-run.sh cmake --build build-web -j$(nproc)
+```
+
+## Windows MSVC 构建
+
+构建脚本位于 [`scripts/`](../scripts/)；请勿将可执行脚本移动到本说明目录。详细的英文参考见 [doc/win-build.md](../doc/win-build.md)。
+
+### 前置条件
+
+- Visual Studio 2022，并安装 **Desktop development with C++** 工作负载
+- CMake
+- [vcpkg](https://vcpkg.io/)
+- [WinFlexBison](https://github.com/lexxmark/winflexbison)（`win_flex.exe` 与 `win_bison.exe`）
+- 已初始化 Visual Studio 编译环境的 Developer Command Prompt
+
+在 PowerShell 中设置 vcpkg；若 WinFlexBison 未加入 `PATH`，也设置其解压目录：
+
+```powershell
+$env:VCPKG_ROOT = "C:\path\to\vcpkg"
+$env:WIN_FLEX_BISON_DIR = "C:\path\to\winflexbison"
+```
+
+`WIN_FLEX_BISON_DIR` 是可选的：当 `win_flex.exe` 和 `win_bison.exe` 已在 `PATH` 中时可省略。
+
+### 下载与构建
+
+可从任意当前目录调用以下脚本。下载器仅将压缩包保存到仓库根目录的 `win_flex_bison.zip`；解压后再设置 `WIN_FLEX_BISON_DIR`。
+
+```bat
+call C:\path\to\openscad\scripts\win-msvc-download-winflexbison.bat
+call C:\path\to\openscad\scripts\win-msvc-build.bat
+```
+
+构建器会生成 headless 的 Debug 和 Release 配置，产物为：
+
+```text
+build\Debug\openscad.exe
+build\Release\openscad.exe
 ```
 
 ## 核心 CMake 选项
@@ -51,6 +89,7 @@ docker build -t openscad-musl -f build-cli-musl/Dockerfile .
 
 - [build-cli.md](build-cli.md) — CLI 动态链接 (glibc)
 - [build-cli-musl.md](build-cli-musl.md) — CLI 静态链接 (musl)
+- [Windows MSVC 构建指南](../doc/win-build.md) — Visual Studio 与 vcpkg
 - [build-web.md](build-web.md) — WebAssembly
 
 ## 导出格式
