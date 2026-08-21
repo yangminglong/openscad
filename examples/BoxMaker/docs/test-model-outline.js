@@ -50,5 +50,42 @@ Model.shapes = [
 assert(Model.containmentDepth(Model.shapes[1]) === 1, "圆在矩形内 → depth 1 (孔)");
 assert(Model.polygonContains(Model.shapes[0], Model.shapes[1]) === true, "polygonContains(rect, circle) = true");
 
+console.log("== 6. 正多边形参数与顶点同步 ==");
+const hex = {
+  id: "p1", type: "polygon",
+  points: [
+    {x: 50, y: 60}, {x: 41.34, y: 55}, {x: 41.34, y: 45},
+    {x: 50, y: 40}, {x: 58.66, y: 45}, {x: 58.66, y: 55}
+  ],
+  poly: {x: 0, y: 0, radius: 0, sides: 6, angle: 0}
+};
+Model.syncRegularPolyMetadata(hex);
+assert(approx(hex.poly.x, 50, 0.01) && approx(hex.poly.y, 50, 0.01), "正多边形同步中心");
+assert(approx(hex.poly.radius, 10, 0.01), "正多边形同步半径");
+assert(approx(hex.poly.angle, 0, 0.01), "首顶点在 +Y 时同步 angle=0");
+hex.points = hex.points.map(function(p) { return {x: 100 - (p.y - 50), y: 200 + (p.x - 50)}; });
+Model.syncRegularPolyMetadata(hex);
+assert(approx(hex.poly.x, 100, 0.01) && approx(hex.poly.y, 200, 0.01), "旋转/平移后同步中心");
+assert(approx(hex.poly.radius, 10, 0.01), "旋转后保持半径");
+assert(approx(hex.poly.angle, 90, 0.01), "首顶点旋至 -X 时同步 angle=90");
+
+console.log("== 7. 多层命中顺序 ==");
+const overlapBottom = {id: "bottom", type: "rect", visible: true, rect: {x: 50, y: 50, w: 80, h: 80, angle: 0, radius: 0}, points: []};
+const overlapHidden = {id: "hidden", type: "circle", visible: false, points: [{x: 50, y: 50}, {x: 70, y: 50}]};
+const overlapTop = {id: "top", type: "polygon", visible: true, points: [{x: 30, y: 30}, {x: 70, y: 30}, {x: 50, y: 70}]};
+Model.shapes = [overlapBottom, overlapHidden, overlapTop];
+const hitIds = Model.hitTestAll(50, 50).map(function(s) { return s.id; });
+assert(hitIds.join(",") === "top,bottom", "多层命中按顶层到低层返回，跳过隐藏图形");
+assert(Model.hitTest(50, 50).id === "top", "hitTest 保持返回最上层图形");
+assert(Model.hitTestAll(200, 200).length === 0, "空白点返回空命中列表");
+
+console.log("== 8. 图层提升 ==");
+const originalTopPoints = JSON.stringify(overlapTop.points);
+assert(Model.bringToFront("bottom") === true, "可将下层图形提升到顶层");
+assert(Model.shapes.map(function(s) { return s.id; }).join(",") === "hidden,top,bottom", "模型顺序更新为底层到顶层");
+assert(Model.hitTestAll(50, 50)[0].id === "bottom", "提升后命中最上层为被选图形");
+assert(JSON.stringify(overlapTop.points) === originalTopPoints, "提升不改变其他图形几何数据");
+assert(Model.bringToFront("bottom") === false && Model.bringToFront("missing") === false, "顶层或不存在的图形不改变顺序");
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

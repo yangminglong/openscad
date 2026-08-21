@@ -31,8 +31,7 @@ var Renderer = {
       self.rebuildOne(shape);
     });
 
-    // 同步对象列表 + 代码视图 + 自动预览 (app.js/codeview.js 定义, 运行时守卫)
-    // 覆盖所有增删路径: 工具创建/删除/图形库加载/重置 (此前这些路径不触发自动预览)
+    // 同步对象列表 + 代码视图 + 自动预览。模型改变会覆盖未预览的手写代码。
     if (typeof renderObjectList === "function") renderObjectList();
     if (typeof CodeView !== "undefined") CodeView.scheduleCodeRefresh();
     if (typeof S !== "undefined" && S.autoPreview && typeof schedulePreview === "function") schedulePreview();
@@ -45,8 +44,10 @@ var Renderer = {
     var wasSelected = (Model.selectedId === shape.id);
     var wasEditing = (Model.editId === shape.id);
 
-    // 移除旧对象
+    // 移除旧对象，并保留它的画布层级，避免编辑低层图形后被追加到顶层。
+    var oldIndex = -1;
     if (this.fabricShapes[shape.id]) {
+      oldIndex = this.canvas.getObjects().indexOf(this.fabricShapes[shape.id]);
       this.canvas.remove(this.fabricShapes[shape.id]);
       delete this.fabricShapes[shape.id];
     }
@@ -56,7 +57,8 @@ var Renderer = {
 
     obj._shapeId = shape.id;
     this.fabricShapes[shape.id] = obj;
-    this.canvas.add(obj);
+    if (oldIndex >= 0 && typeof this.canvas.insertAt === "function") this.canvas.insertAt(obj, oldIndex, false);
+    else this.canvas.add(obj);
     obj.setCoords();
 
     // 恢复选中状态 (隐藏图形不可激活)
@@ -148,6 +150,25 @@ var Renderer = {
       path.setControlsVisibility({ml: false, mr: false, mt: false, mb: false});
     }
     return path;
+  },
+
+  // 将图形提升到所有图形对象的最顶层，不影响床面、草图和临时 UI 图层。
+  moveShapeToTop: function(shapeId) {
+    var obj = this.fabricShapes[shapeId];
+    if (!obj || !this.canvas || typeof this.canvas.moveTo !== "function") return false;
+    var objects = this.canvas.getObjects();
+    var shapeObjects = Object.keys(this.fabricShapes).map(function(id) {
+      return Renderer.fabricShapes[id];
+    }).filter(function(shape) { return shape; });
+    var topIndex = -1;
+    shapeObjects.forEach(function(shape) {
+      topIndex = Math.max(topIndex, objects.indexOf(shape));
+    });
+    if (topIndex < 0 || objects.indexOf(obj) === topIndex) return false;
+    this.canvas.moveTo(obj, topIndex);
+    obj.setCoords();
+    this.canvas.requestRenderAll();
+    return true;
   },
 
   // 获取选中图形的 Fabric 对象

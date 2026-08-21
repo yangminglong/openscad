@@ -15,22 +15,30 @@ select.btn{appearance:auto}
 #main{display:flex;flex:1;overflow:hidden}
 
 /* Left toolbar */
-#left-bar{width:50px;background:var(--panel);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;padding:6px 0;gap:4px;overflow-y:auto;flex-shrink:0}
-.tbtn{width:36px;height:36px;font-size:16px;border:1px solid transparent;border-radius:4px;background:transparent;color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:.15s}
+#left-bar{width:96px;background:var(--panel);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:stretch;padding:6px;gap:4px;overflow-y:auto;flex-shrink:0}
+.tool-group{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px}
+#userlib-list{display:block}
+.tbtn{width:100%;height:36px;font-size:16px;border:1px solid transparent;border-radius:4px;background:transparent;color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:.15s}
 .tbtn:hover{background:#333;color:#fff}
 .tbtn.active{background:var(--primary);color:#fff;border-color:var(--primary)}
-.tool-sep{width:30px;height:1px;background:var(--border);margin:6px 0}
-.lib-title{font-size:10px;color:var(--text2);text-align:center;margin-top:4px;writing-mode:vertical-rl}
-#lib-items{display:flex;flex-direction:column;gap:2px}
-.lib-item{width:36px;height:28px;font-size:14px;border:1px solid var(--border);border-radius:3px;background:#1a1a1a;color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center}
-.lib-item:hover{background:#333;color:#fff}
+.tool-sep{width:100%;height:1px;background:var(--border);margin:6px 0}
+.lib-title{display:flex;align-items:center;justify-content:space-between;gap:4px;font-size:12px;color:var(--text2);text-align:left;margin:4px 0}
+#btn-lib-manage{flex-shrink:0;padding:1px 4px;border:1px solid var(--border);border-radius:3px;background:transparent;color:var(--text2);font-size:11px;line-height:18px;cursor:pointer}
+#btn-lib-manage:hover,#btn-lib-manage.active{background:#333;color:#fff;border-color:var(--primary)}
+#lib-items{display:flex;flex-direction:column;gap:3px}
+.lib-row{display:flex;align-items:stretch;gap:3px;min-width:0}
+.lib-item{width:100%;min-height:30px;padding:3px 6px;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border:1px solid var(--border);border-radius:3px;background:#1a1a1a;color:var(--text2);cursor:pointer;display:block;text-align:left}
+.lib-row .lib-item{flex:1;min-width:0}
+.lib-item:hover,.lib-item.active{background:#333;color:#fff;border-color:var(--primary)}
+.lib-delete{flex:0 0 30px;min-height:30px;border:1px solid #7b3731;border-radius:3px;background:#2b1918;color:var(--danger);font-size:18px;line-height:1;cursor:pointer}
+.lib-delete:hover,.lib-delete:focus-visible{background:var(--danger);border-color:var(--danger);color:#fff;outline:none}
 
 /* Canvas */
 #canvas-area{flex:1;position:relative;overflow:hidden;background:#474747;min-width:0}
 #editor-canvas{display:block}
 
 /* Right floating column: 3D 预览 (上) + SCAD 代码窗口 (下), 同 8px 边距 */
-#right-float-col{position:absolute;top:8px;right:8px;bottom:8px;width:300px;display:flex;flex-direction:column;gap:8px;z-index:10;pointer-events:none}
+#right-float-col{position:absolute;top:8px;right:8px;bottom:8px;width:320px;display:flex;flex-direction:column;gap:8px;z-index:10;pointer-events:none}
 #right-float-col>*{pointer-events:auto}
 
 /* Preview window (列内首项, 随列宽) */
@@ -89,6 +97,15 @@ select.btn{appearance:auto}
 .cw-btn{padding:2px 8px;font-size:11px}
 .cw-body{flex:1;min-height:0;display:flex;flex-direction:column}
 .CodeMirror{flex:1;height:100%;font-size:12px}
+
+/* Context menu */
+.ctx-menu{position:fixed;min-width:200px;max-width:300px;background:#1a1a1a;border:1px solid var(--border);border-radius:4px;padding:4px 0;z-index:100;box-shadow:0 4px 8px rgba(0,0,0,.5)}
+.ctx-title{padding:5px 12px 4px;font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px}
+.ctx-item{display:block;width:100%;padding:6px 12px;border:0;background:transparent;color:var(--text);font:12px inherit;text-align:left;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ctx-item:hover{background:#333;color:#fff}
+.ctx-depth-item{color:#d3e6fa}
+.ctx-danger{color:var(--danger)}
+.ctx-divider{height:1px;background:var(--border);margin:4px 0}
 
 /* Settings popup */
 .settings-pop{position:fixed;top:38px;right:12px;width:320px;background:#1a1a1a;border:1px solid #3a3a3a;border-radius:6px;padding:8px 0;z-index:100;box-shadow:0 4px 12px rgba(0,0,0,.5)}

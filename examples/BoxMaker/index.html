@@ -101,7 +101,10 @@
     </div>
     <div class="tool-sep"></div>
     <div class="tool-group" id="userlib-list">
-      <div class="lib-title">用户图形</div>
+      <div class="lib-title">
+        <span>用户图形</span>
+        <button id="btn-lib-manage" type="button" aria-pressed="false" title="管理用户图形">管理</button>
+      </div>
       <div id="lib-items"></div>
     </div>
   </aside>
@@ -129,8 +132,9 @@
         <div id="cw-resizer" title="拖拽调整宽度"></div>
         <div class="cw-titlebar">
           <span class="cw-title">SCAD 代码</span>
-          <span class="cw-hint">只读</span>
+          <span id="cw-state" class="cw-hint">图形代码</span>
           <span class="spacer"></span>
+          <button id="cw-preview" class="btn cw-btn" title="预览当前 SCAD 代码 (Ctrl+Enter)">预览</button>
           <button id="cw-copy" class="btn cw-btn" title="复制到剪贴板">复制</button>
           <button class="pw-btn" id="cw-collapse" title="折叠">▲</button>
         </div>
@@ -219,23 +223,8 @@
 <!-- Status bar -->
 <footer id="statusbar">
   <span id="status-text">就绪</span>
-  <span id="status-wasm">WASM 加载中...</span>
+  <span id="status-wasm">服务连接中...</span>
 </footer>
-
-<!-- OpenSCAD WASM (ES module, uses top-level await) -->
-<script type="module">
-import OpenSCAD from '../../build-web/openscad.js';
-var mod = await OpenSCAD({
-  noInitialRun: true, noExitRuntime: true,
-  print: t => console.log('[OS]', t),
-  printErr: t => console.log('[OS]', t),
-  locateFile: path => path.endsWith('.wasm') ? '../../build-web/openscad.wasm' : path
-});
-// Route stderr to print (not printErr) since OpenSCAD sends all diagnostics to stderr
-mod.printErr = mod.print;
-window.OpenSCADModule = mod;
-document.dispatchEvent(new CustomEvent('openscad-ready'));
-</script>
 
 <!-- App modules (order matters) -->
 <script src="js/model.js"></script>

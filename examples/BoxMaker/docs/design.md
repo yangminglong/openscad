@@ -9,7 +9,7 @@ MakerWorld 模式:
 
 - **单一数据源**：所有图形坐标存 Model（bed mm），Fabric 对象只是视图，每次修改全量重建，避免 Fabric 内部坐标状态 bug
 - **单一坐标换算入口**：画布 ↔ bed 换算只存在于 Scene；SCAD 导出、3D 预览、草图全部消费同一 bed 坐标系
-- **3D 是纯下游**：2D → SCAD → OpenSCAD WASM → STL → Three.js，单向流动，3D 从不回写
+- **3D 是纯下游**：2D → 生成/手写 SCAD → 本地 OpenSCAD CLI 服务 → STL → Three.js，单向流动，3D 从不回写
 
 ## 坐标系（全链路一致）
 
@@ -74,7 +74,7 @@ model = { shapes: [], selectedId: null, editId: null }
 
 ```text
 examples/BoxMaker/
-├── index.html           入口: WASM 模块 + 工具条 + 浮动栏 + 对象列表区
+├── index.html           入口: 工具条 + 浮动栏 + 对象列表区
 ├── css/editor.css
 ├── js/
 │   ├── model.js         纯数据模型 + 几何计算 (射线法/包含深度/最近边顶点)
@@ -84,8 +84,9 @@ examples/BoxMaker/
 │   ├── overlay.js       SVG 覆盖层 (顶点编辑控制圆)
 │   ├── controller.js    交互: 鼠标/键盘/钢笔/多选/平移缩放 (分发至 Sketch→Overlay)
 │   ├── preview.js       Three.js 3D 预览 (OrbitControls) + STL 解析
-│   ├── codeview.js      SCAD 代码窗口 (CodeMirror 只读 + 左侧拉手调宽 + 折叠/复制)
-│   └── app.js           入口 + 属性面板 + 对象列表 + SCAD 生成 + WASM 渲染 + 用户图形库
+│   ├── codeview.js      SCAD 代码编辑器 (预览 + 左侧拉手调宽 + 折叠/复制)
+│   └── app.js           入口 + 属性面板 + 对象列表 + SCAD 生成 + 服务端请求 + 用户图形库
+├── server.js             独立 Node HTTP 服务：静态文件 + OpenSCAD CLI STL/3MF API
 ├── lib/
 │   ├── fabric.min.js    Fabric 5.3
 │   ├── three.min.js     Three r15x
@@ -97,7 +98,8 @@ examples/BoxMaker/
     ├── test-sketch-math.js     单应矩阵数学单测 (node, 11 项)
     ├── test-sketch-warp.js     warp 坐标换算集成测试 (node, canvas stub, 11 项)
     ├── test-model-outline.js   Model 轮廓展开/命中/包含深度 (node, 13 项)
-    └── test-scad-expr.js       SCAD 表达式辅助函数回归 (node, 8 项)
+    ├── test-scad-expr.js       SCAD/BOSL2 表达式辅助函数回归 (node)
+    └── test-library-pan.js     图库模板与持久床面平移回归 (node)
 ```
 
 ## 照片草图 (sketch.js)
@@ -126,12 +128,12 @@ examples/BoxMaker/
 ## 代码视图 (codeview.js)
 
 - **布局**：右侧浮动列（`#right-float-col`，上 8/右 8/下 8px 边距）——3D 预览窗在上，SCAD 代码窗口在下，高度 flex 占剩余空间；列容器 `pointer-events:none`、子窗口 auto（缝隙穿透到 2D 画布）
-- 编辑器：CodeMirror 5 只读，`text/x-csrc` C-like 高亮，material-darker 主题（与 ServerClient 同款配置）
+- 编辑器：CodeMirror 5 可编辑，`text/x-csrc` C-like 高亮，material-darker 主题；手写内容可点“预览”或 Ctrl/Cmd+Enter 发给服务端。
 - **左侧拉手**（`#cw-resizer`）拖拽调整整列宽度（200~560px，预览窗同步），拖动中实时 `Preview3D.fitCanvas()` + `cm.refresh()`
 - **标题栏**：折叠按钮（折叠后只显示标题栏，`flex:0 0 auto`）+ 复制按钮（navigator.clipboard，旧浏览器 execCommand 回退）
-- 内容 = `generateSCAD()` 输出，同步时机：
-  - 渲染成功（导出/自动预览）→ 立即 `refresh()`
-  - 图形/参数高频变更（rebuildAll/rebuildOne/全局参数滑条）→ 200ms 防抖 `scheduleCodeRefresh()`
+- 内容默认 = `generateSCAD()` 输出；用户修改后进入“手写草稿”状态，预览/导出使用当前编辑器文本。
+  - 图形/参数高频变更（rebuildAll/rebuildOne/全局参数滑条）→ 200ms 防抖 `scheduleCodeRefresh()`，覆盖并丢弃手写草稿
+  - `预览` 按钮 / Ctrl/Cmd+Enter → 将当前文本 POST 到服务端
 - 预览窗折叠/展开 → `Preview3D.fitCanvas()` 同步渲染尺寸
 
 ## 3D 预览 (preview.js)
@@ -177,22 +179,22 @@ walls();
 ```
 
 ```text
-generateSCAD(): module plate(底板: 轮廓/边界框/凸包 + 外边距) + module walls(图形挤出: 原始嵌套/墙偏置) —— 无外壳
-  → FS.writeFile(/in*.scad)
-  → callMain(["--export-format","binstl","-o",fout,fin])
-  → FS.readFile → S.stlData (下载) + parseSTL → Three.js (预览)
+generateSCAD(): 首行 include <BOSL2/std.scad> + module plate(底板: 轮廓/边界框/凸包 + 外边距) + module walls(图形挤出: 原始嵌套/墙偏置) —— 无外壳
+  → POST /api/render?format=stl (预览) 或 /api/export?format=stl|3mf
+  → server.js: 临时目录写入 model.scad + spawn OpenSCAD CLI
+  → --export-format binstl / 3mf → 二进制响应 → parseSTL → Three.js 或浏览器下载
 ```
 
-WASM 加载：ES module + top-level await，`locateFile` 映射 `../../build-web/openscad.wasm`，`openscad-ready` 事件通知经典脚本。
+服务端初始化会检查 CLI 与 `libraries/BOSL2/std.scad`。请求受并发、正文大小和超时限制，但 SCAD 可访问服务端文件系统，因此仅限可信本地环境。
 
 ## 已知限制
 
-1. 工具栏 3MF 选项未接管线（下载固定 STL）
-2. 嵌套第 3 层（孔中岛, depth≥2）不导出
-3. 草图不持久化；镜头桶形畸变不矫正（建议 2× 变焦拍摄）
-4. 2D 中键平移 bed 后 Scene.rebuild 会重新居中（平移未真正生效）
-5. 交换视图的 2D mini 模式下顶点编辑覆盖层（SVG 固定在主区）会错位，不建议 mini 态做顶点编辑
-6. 全局参数·壁厚滑条（S.wall）原用于外壳，外壳移除后暂无用途（保留待重新定义）
+1. 3MF 是否可用取决于运行服务的 CLI 是否启用了 3MF；健康检查会禁用不支持的格式。
+2. 嵌套第 3 层（孔中岛, depth≥2）不导出。
+3. 草图不持久化；镜头桶形畸变不矫正（建议 2× 变焦拍摄）。
+4. 手写 SCAD 是一次性草稿；任何图形/设置变更都会覆盖为新生成的代码。
+5. 服务端执行任意 SCAD 只适用于可信本地环境；生产部署必须隔离文件系统、网络与进程资源。
+6. 全局参数·壁厚滑条（S.wall）原用于外壳，外壳移除后暂无用途（保留待重新定义）。
 
 ## 测试
 
@@ -201,7 +203,8 @@ WASM 加载：ES module + top-level await，`locateFile` 映射 `../../build-web
 - `node docs/test-sketch-math.js` — 单应矩阵：角点精确映射、H·H⁻¹=I、往返误差、参考线标定反推 A4 尺寸、共线退化、恒等缩放（11 项）
 - `node docs/test-sketch-warp.js` — warpPerspective：降采样坐标换算（含"不是旧值"回归断言）、子区域框选边界、超界透明（11 项）
 - `node docs/test-model-outline.js` — Model 轮廓展开：rect 角点/旋转 90°、circle 32 边形、rect/circle 命中与包含深度（13 项）
-- `node docs/test-scad-expr.js` — SCAD 表达式回归：offsetExpr 负偏置必须包装（内偏置丢弃 bug）、shapeOutset 三种偏置方向（8 项）
+- `node docs/test-scad-expr.js` — SCAD/BOSL2 表达式回归：offsetExpr 负偏置必须包装、BOSL2 首行 include、圆角 rect 的尺寸/旋转语义。
+- `node docs/test-library-pan.js` — 图库模板中心/深拷贝与 Scene 持久 pan 状态的回归。
 - 全部 JS 文件 `node --check` 语法检查
 
 **手动清单**（HTTP 服务根目录，`http://localhost:PORT/examples/BoxMaker/index.html`）：

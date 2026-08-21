@@ -78,6 +78,17 @@ var Model = {
     return this.getShape(this.editId);
   },
 
+  // 将图形提升到模型层的最顶层 (shapes 尾部)。
+  bringToFront: function(id) {
+    var index = -1;
+    for (var i = 0; i < this.shapes.length; i++) {
+      if (this.shapes[i].id === id) { index = i; break; }
+    }
+    if (index < 0 || index === this.shapes.length - 1) return false;
+    this.shapes.push(this.shapes.splice(index, 1)[0]);
+    return true;
+  },
+
   clearAll: function() {
     this.shapes = [];
     this.selectedId = null;
@@ -89,6 +100,30 @@ var Model = {
     if (!shape.poly) return;
     delete shape.poly;
     shape.toolType = "pen";
+  },
+
+  // 从最终 bed 顶点同步正多边形参数。Canvas 与 SCAD 都约定首个顶点方向为 angle + 90°。
+  syncRegularPolyMetadata: function(shape) {
+    if (!shape || !shape.poly || !shape.points || !shape.points.length) return;
+    var poly = shape.poly, cx = 0, cy = 0;
+    shape.points.forEach(function(p) { cx += p.x; cy += p.y; });
+    cx /= shape.points.length;
+    cy /= shape.points.length;
+    poly.x = cx;
+    poly.y = cy;
+
+    var radius = 0;
+    shape.points.forEach(function(p) {
+      radius = Math.max(radius, Math.hypot(p.x - cx, p.y - cy));
+    });
+    poly.radius = radius;
+
+    if (radius > 0) {
+      var first = shape.points[0];
+      var angle = Math.atan2(first.y - cy, first.x - cx) * 180 / Math.PI - 90;
+      poly.angle = ((angle % 360) + 360) % 360;
+      if (poly.angle > 359.999999) poly.angle = 0;
+    }
   },
 
   // ---- 几何计算 (bed mm 坐标) ----
@@ -184,14 +219,20 @@ var Model = {
     return depth;
   },
 
-  // 找包含点的图形 (从上到下); 隐藏图形不可命中
-  hitTest: function(px, py) {
+  // 找包含点的所有图形 (从上到下); 隐藏图形不可命中
+  hitTestAll: function(px, py) {
+    var hits = [];
     for (var i = this.shapes.length - 1; i >= 0; i--) {
       var s = this.shapes[i];
       if (s.visible === false) continue;
-      if (this.pointInPolygon(s, px, py)) return s;
+      if (this.pointInPolygon(s, px, py)) hits.push(s);
     }
-    return null;
+    return hits;
+  },
+
+  // 找包含点的最上层图形 (兼容原有单命中调用)
+  hitTest: function(px, py) {
+    return this.hitTestAll(px, py)[0] || null;
   },
 
   // 找距离点最近的顶点 (在阈值内)

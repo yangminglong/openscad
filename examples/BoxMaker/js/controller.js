@@ -6,6 +6,7 @@
 var Controller = {
   canvas: null,
   activeTool: "select",
+  activeLibraryTemplate: null,
   polySides: 6,
   // 钢笔状态
   penPts: [],        // bed mm 坐标
@@ -19,9 +20,15 @@ var Controller = {
   // 双击检测
   lastClickTime: 0,
   lastClickPos: null,
+  // 选择模式中点击位置的命中堆栈 (顶层 → 底层)
+  hitStackIds: [],
+  hitStackBed: null,
+  applyingHitStackSelection: false,
 
   init: function(canvas) {
     this.canvas = canvas;
+    if (canvas.upperCanvasEl) canvas.upperCanvasEl.tabIndex = 0;
+    var self = this;
 
     canvas.on("mouse:down", this.onDown.bind(this));
     canvas.on("mouse:move", this.onMove.bind(this));
@@ -32,7 +39,9 @@ var Controller = {
     canvas.on("selection:created", this.onSelected.bind(this));
     canvas.on("selection:updated", this.onSelected.bind(this));
     canvas.on("selection:cleared", function() {
+      if (self.applyingHitStackSelection) return;
       Model.selectedId = null;
+      self.clearHitStack();
       if (typeof showProps === "function") showProps(null);
       if (typeof renderObjectList === "function") renderObjectList();
     });
@@ -67,12 +76,112 @@ var Controller = {
 
   setTool: function(t) {
     this.activeTool = t;
+    this.activeLibraryTemplate = null;
+    this.clearHitStack();
     document.querySelectorAll(".tbtn[data-tool]").forEach(function(b) {
       b.classList.toggle("active", b.dataset.tool === t);
     });
+    document.querySelectorAll(".lib-item").forEach(function(b) { b.classList.remove("active"); });
     if (this.penActive) this.cancelPen();
-    this.canvas.selection = (t === "select");
+    var selecting = (t === "select");
+    this.canvas.selection = selecting;
+    this.canvas.skipTargetFind = !selecting;
     this.canvas.defaultCursor = (t === "pen") ? "crosshair" : "default";
+  },
+
+  setLibraryTool: function(template, button) {
+    if (!template) return;
+    this.activeTool = "library";
+    this.activeLibraryTemplate = template;
+    if (this.penActive) this.cancelPen();
+    this.canvas.selection = false;
+    this.canvas.skipTargetFind = true;
+    this.canvas.defaultCursor = "copy";
+    document.querySelectorAll(".tbtn[data-tool]").forEach(function(b) { b.classList.remove("active"); });
+    document.querySelectorAll(".lib-item").forEach(function(b) { b.classList.toggle("active", b === button); });
+    var status = document.getElementById("status-text");
+    if (status) status.textContent = "图库工具已选中：点击打印板可重复放置；按住 Ctrl 点击可选择图形";
+  },
+
+  isTextEditing: function(e) {
+    if (typeof CodeView !== "undefined" && CodeView.cm && CodeView.cm.hasFocus()) return true;
+    var target = e.target;
+    if (!target) return false;
+    if (target.isContentEditable) return true;
+    var tag = (target.tagName || "").toLowerCase();
+    return tag === "input" || tag === "textarea" || tag === "select" || tag === "button";
+  },
+
+  clearHitStack: function() {
+    this.hitStackIds = [];
+    this.hitStackBed = null;
+  },
+
+  captureHitStack: function(bed) {
+    var hits = Model.hitTestAll(bed.x, bed.y);
+    this.hitStackIds = hits.map(function(shape) { return shape.id; });
+    this.hitStackBed = hits.length ? {x: bed.x, y: bed.y} : null;
+    return hits;
+  },
+
+  getValidHitStack: function() {
+    if (!this.hitStackBed || this.hitStackIds.length < 2) return null;
+    var ids = Model.hitTestAll(this.hitStackBed.x, this.hitStackBed.y).map(function(shape) { return shape.id; });
+    var expected = this.hitStackIds.slice().sort();
+    var actual = ids.slice().sort();
+    if (actual.length !== expected.length || actual.some(function(id, index) {
+      return id !== expected[index];
+    })) {
+      this.clearHitStack();
+      return null;
+    }
+    // 层级提升会改变实时命中顺序；循环顺序保持首次点击时的快照。
+    return this.hitStackIds;
+  },
+
+  promoteSelectedShape: function(id) {
+    var changed = Model.bringToFront(id);
+    if (changed && typeof Renderer.moveShapeToTop === "function") Renderer.moveShapeToTop(id);
+    return changed;
+  },
+
+  selectShapeById: function(id, keepHitStack) {
+    var shape = Model.getShape(id);
+    if (!shape || shape.visible === false) return false;
+    this.promoteSelectedShape(id);
+    this.applyingHitStackSelection = true;
+    this.canvas.discardActiveObject();
+    Model.selectedId = id;
+    var obj = Renderer.getFabric(id);
+    if (obj) this.canvas.setActiveObject(obj);
+    this.applyingHitStackSelection = false;
+    if (!keepHitStack) this.clearHitStack();
+    if (typeof showProps === "function") showProps(id);
+    if (typeof renderObjectList === "function") renderObjectList();
+    this.canvas.requestRenderAll();
+    return true;
+  },
+
+  selectShapeAt: function(bed) {
+    var hit = Model.hitTest(bed.x, bed.y);
+    if (hit) return this.selectShapeById(hit.id, false) ? hit : null;
+    this.applyingHitStackSelection = true;
+    this.canvas.discardActiveObject();
+    this.applyingHitStackSelection = false;
+    Model.selectedId = null;
+    this.clearHitStack();
+    if (typeof showProps === "function") showProps(null);
+    if (typeof renderObjectList === "function") renderObjectList();
+    this.canvas.requestRenderAll();
+    return null;
+  },
+
+  cycleHitStack: function(reverse) {
+    var ids = this.getValidHitStack();
+    if (!ids) return false;
+    var current = ids.indexOf(Model.selectedId);
+    var next = current < 0 ? 0 : (current + (reverse ? -1 : 1) + ids.length) % ids.length;
+    return this.selectShapeById(ids[next], true);
   },
 
   // ---- 鼠标事件 ----
@@ -93,10 +202,10 @@ var Controller = {
       return;
     }
 
-    if (e.button === 2) { this.onRightClick(e, o.target); return; }
-
     var pointer = this.canvas.getPointer(e);
     var bed = Scene.canvasToBed(pointer.x, pointer.y);
+
+    if (e.button === 2) { this.onRightClick(e, bed); return; }
 
     // 顶点编辑模式: 点击空白退出
     if (Model.editId) {
@@ -110,6 +219,28 @@ var Controller = {
         Model.editId = null;
         Overlay.hide();
       }
+      return;
+    }
+
+    // 选择模式普通单击保存此处的所有命中，Fabric 仍负责实际点击/拖拽/框选。
+    if (this.activeTool === "select") {
+      if (e.button !== 0 || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) this.clearHitStack();
+      else {
+        this.captureHitStack(bed);
+        if (this.canvas.upperCanvasEl && this.hitStackIds.length) this.canvas.upperCanvasEl.focus();
+      }
+      return;
+    }
+
+    // 非选择工具中，Ctrl 点击临时按选择模式处理，保留当前工具供下一次创建使用。
+    if (e.ctrlKey) {
+      this.selectShapeAt(bed);
+      return;
+    }
+
+    // 图库工具：普通点击始终重复放置模板（包括已有图形上方）。
+    if (this.activeTool === "library" && this.activeLibraryTemplate) {
+      if (typeof placeLibraryShape === "function") placeLibraryShape(this.activeLibraryTemplate, bed.x, bed.y);
       return;
     }
 
@@ -147,15 +278,8 @@ var Controller = {
       return;
     }
 
-    // 形状工具
+    // 形状工具：普通点击始终创建，允许与已有图形重叠。
     if (this.activeTool === "rect" || this.activeTool === "circle" || this.activeTool === "polygon") {
-      // 点击已有图形 → 选中
-      var hit = Model.hitTest(bed.x, bed.y);
-      if (hit) {
-        Model.selectedId = hit.id;
-        this.setTool("select");
-        return;
-      }
       this.createShape(this.activeTool, bed.x, bed.y);
     }
   },
@@ -200,7 +324,7 @@ var Controller = {
   onUp: function() {
     if (this.dragShapeId) {
       this.dragShapeId = null;
-      if (S && S.autoPreview) renderSTL();
+      if (S && S.autoPreview) schedulePreview();
     }
   },
 
@@ -221,6 +345,7 @@ var Controller = {
       var vIdx = Model.hitVertex(editShape, bed.x, bed.y, 1.5);
       if (vIdx !== null) {
         if (editShape.points.length > 3) {
+          Model.degradePoly(editShape);
           editShape.points.splice(vIdx, 1);
           Renderer.rebuildOne(editShape);
           Overlay.render();
@@ -229,6 +354,7 @@ var Controller = {
       }
 
       // 双击边 → 新增顶点
+      Model.degradePoly(editShape);
       var insertIdx = Model.findClosestEdge(editShape, bed.x, bed.y);
       editShape.points.splice(insertIdx, 0, {x: bed.x, y: bed.y});
       Renderer.rebuildOne(editShape);
@@ -239,8 +365,8 @@ var Controller = {
     // 双击多边形 → 进入编辑模式
     var hit = Model.hitTest(bed.x, bed.y);
     if (hit && hit.type === "polygon") {
+      this.selectShapeById(hit.id, false);
       Model.editId = hit.id;
-      Model.selectedId = hit.id;
       this.canvas.discardActiveObject();
       this.canvas.renderAll();
       Overlay.show(hit.id);
@@ -260,9 +386,9 @@ var Controller = {
       var dx = e.clientX - this.bedPanLast.x;
       var dy = e.clientY - this.bedPanLast.y;
       this.bedPanLast = {x: e.clientX, y: e.clientY};
-      Scene.bedLeft += dx;
-      Scene.bedTop += dy;
-      Scene.rebuild(); // 内部会重建图形 + 同步覆盖层
+      Scene.panX += dx;
+      Scene.panY += dy;
+      Scene.rebuild(); // 内部会按持久 pan 重建图形 + 同步覆盖层
     }
   },
 
@@ -270,16 +396,19 @@ var Controller = {
     this.bedPanning = false;
   },
 
-  onRightClick: function(e, target) {
-    // 右键菜单
-    if (target && target._shapeId) {
-      showContextMenu(e.clientX, e.clientY, target._shapeId);
-    }
+  onRightClick: function(e, bed) {
+    var old = document.querySelector(".ctx-menu");
+    if (old) old.remove();
+    if (this.activeTool !== "select") return;
+    var hits = Model.hitTestAll(bed.x, bed.y);
+    if (!hits.length) return;
+    showContextMenu(e.clientX, e.clientY, hits);
   },
 
   // ---- 对象事件 ----
 
   onModified: function(o) {
+    this.clearHitStack();
     var obj = o.target;
     if (!obj) return;
 
@@ -338,18 +467,7 @@ var Controller = {
         var w = fabric.util.transformPoint(selLocal, selMatrix);
         return Scene.canvasToBed(w.x, w.y);
       });
-      if (shape.poly) {
-        var pp = shape.poly;
-        var ncx = 0, ncy = 0;
-        shape.points.forEach(function(p) { ncx += p.x; ncy += p.y; });
-        ncx /= shape.points.length; ncy /= shape.points.length;
-        pp.x = ncx; pp.y = ncy;
-        var maxR = 0;
-        shape.points.forEach(function(p) {
-          maxR = Math.max(maxR, Math.hypot(p.x - ncx, p.y - ncy));
-        });
-        pp.radius = maxR;
-      }
+      if (shape.poly) Model.syncRegularPolyMetadata(shape);
     } else if (shape.type === "circle") {
       var cw = fabric.util.transformPoint({x: obj.left, y: obj.top}, selMatrix);
       var ew = fabric.util.transformPoint({x: obj.left + obj.radius * obj.scaleX, y: obj.top}, selMatrix);
@@ -408,21 +526,8 @@ var Controller = {
         var w = localToWorld(p.x, p.y);
         return Scene.canvasToBed(w.x, w.y);
       });
-      // 正多边形: 同步 poly 属性
-      if (shape.poly) {
-        var pp = shape.poly;
-        var ncx = 0, ncy = 0;
-        shape.points.forEach(function(p) { ncx += p.x; ncy += p.y; });
-        ncx /= shape.points.length; ncy /= shape.points.length;
-        pp.x = ncx; pp.y = ncy;
-        pp.angle = obj.angle || 0;
-        // 半径 = 顶点到中心的最大距离
-        var maxR = 0;
-        shape.points.forEach(function(p) {
-          maxR = Math.max(maxR, Math.hypot(p.x - ncx, p.y - ncy));
-        });
-        pp.radius = maxR;
-      }
+      // 正多边形: 从最终 bed 顶点同步中心、半径和角度，避免重复应用 Fabric 的屏幕角度。
+      if (shape.poly) Model.syncRegularPolyMetadata(shape);
     } else if (shape.type === "circle") {
       // 圆形是 center 原点: left/top 即圆心, 旋转绕圆心自身
       var cc = Scene.canvasToBed(obj.left, obj.top);
@@ -454,6 +559,8 @@ var Controller = {
   },
 
   onMoving: function(o) {
+    // 移动会使点击位置的命中堆栈失效。
+    this.clearHitStack();
     // 移动时实时更新 model (用于 SVG 覆盖层同步)
     var obj = o.target;
     if (!obj) return;
@@ -493,12 +600,21 @@ var Controller = {
           obj.top + rx * sin2 + ry * cos2
         );
       });
+      if (shape.poly) Model.syncRegularPolyMetadata(shape);
     }
   },
 
   onSelected: function(o) {
+    if (this.applyingHitStackSelection) return;
+    if (this.canvas.getActiveObject() && this.canvas.getActiveObject().type === "activeSelection") {
+      Model.selectedId = null;
+      this.clearHitStack();
+      return;
+    }
     if (o.selected && o.selected[0] && o.selected[0]._shapeId) {
-      Model.selectedId = o.selected[0]._shapeId;
+      var id = o.selected[0]._shapeId;
+      this.promoteSelectedShape(id);
+      Model.selectedId = id;
       if (typeof showProps === "function") showProps(Model.selectedId);
       if (typeof renderObjectList === "function") renderObjectList();
     }
@@ -536,6 +652,7 @@ var Controller = {
   // ---- 形状创建 ----
 
   createShape: function(type, bx, by) {
+    this.clearHitStack();
     var points;
     if (type === "rect") {
       points = [
@@ -562,6 +679,15 @@ var Controller = {
   // ---- 键盘 ----
 
   onKey: function(e) {
+    if (this.isTextEditing(e)) return;
+    if (e.key === "Tab") {
+      var canvasFocused = this.canvas.upperCanvasEl && document.activeElement === this.canvas.upperCanvasEl;
+      var multiSelecting = this.canvas.getActiveObject() && this.canvas.getActiveObject().type === "activeSelection";
+      if (this.activeTool === "select" && !Model.editId && !Sketch.rectify && canvasFocused && !multiSelecting && this.cycleHitStack(e.shiftKey)) {
+        e.preventDefault();
+      }
+      return;
+    }
     if (e.key === "s" || e.key === "S") this.setTool("select");
     else if (e.key === "p" || e.key === "P") { this.setTool("pen"); e.preventDefault(); }
     else if (e.key === "Delete" || e.key === "Backspace") {

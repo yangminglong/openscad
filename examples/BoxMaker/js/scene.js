@@ -51,6 +51,9 @@ var Scene = {
   scale: 1,
   bedLeft: 0,
   bedTop: 0,
+  // 中键拖拽形成的持久视图平移 (canvas px)。缩放/重建不会清除它。
+  panX: 0,
+  panY: 0,
 
   // 按 id 查床
   getBedById: function(id) {
@@ -123,8 +126,8 @@ var Scene = {
     var cw = this.canvas.getWidth(), ch = this.canvas.getHeight();
     var scale = Math.min(cw / dw, ch / dh);
     this.scale = scale;
-    this.bedLeft = (cw - dw * scale) / 2;
-    this.bedTop = (ch - dh * scale) / 2;
+    this.bedLeft = (cw - dw * scale) / 2 + this.panX;
+    this.bedTop = (ch - dh * scale) / 2 + this.panY;
 
     var items = [];
     // 床背景 (显示区 = 打印区 + 边距, 边距作为边框; 圆角 r = margin)

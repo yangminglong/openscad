@@ -4,13 +4,14 @@
 // ============================================================
 
 var S = {activeTool: "select", wall: 2, bottom: 2, h: 50, divRatio: 0.9,
-         wasmReady: false, stlData: null, autoPreview: true,
+         serverReady: false, autoPreview: true, renderSeq: 0, renderAbort: null,
          outlineMode: "original",       // "original" 原始轮廓 | "wall" 墙
          offsetDir: "inner",            // 墙模式偏置方向: "inner" 内 | "outer" 外 | "both" 两侧
          defaultWall: 2,                // 墙模式图形壁厚初始值 (mm)
          defaultHeight: 43.2,           // 图形拉伸高度初始值 (mm)
          floorType: "none",             // 底板类型: "none" 无 | "outline" 轮廓 | "bbox" 边界框 | "hull" 凸包
-         floorMargin: 0};               // 底板外边距 (mm, 外偏置)
+         floorMargin: 0,                // 底板外边距 (mm, 外偏置)
+         libraryManageMode: false};     // 用户图形管理模式 (仅当前页面会话)
 var canvas;
 
 function $(id) { return document.getElementById(id); }
@@ -62,8 +63,7 @@ function init() {
   CodeView.init();
   Settings.init();
 
-  if (window.OpenSCADModule) onWasmReady();
-  document.addEventListener("openscad-ready", onWasmReady);
+  checkServerHealth();
 }
 
 function resize() {
@@ -79,12 +79,15 @@ function bindUI() {
   document.querySelectorAll(".tbtn[data-tool]").forEach(function(b) {
     b.addEventListener("click", function() { Controller.setTool(b.dataset.tool); });
   });
-  $("btn-export").addEventListener("click", function() { renderSTL().then(downloadSTL); });
+  $("btn-export").addEventListener("click", exportCurrentSource);
   $("btn-reset").addEventListener("click", resetAll);
+  $("btn-lib-manage").addEventListener("click", function() {
+    setLibraryManageMode(!S.libraryManageMode);
+  });
   $("chk-autopreview").addEventListener("change", function() {
     S.autoPreview = this.checked;
     // 勾选时立即渲染一次 (预览同步当前模型, 不用等下次编辑)
-    if (this.checked) renderSTL();
+    if (this.checked) renderSTL(generateSCAD(), {generated: true});
   });
 
   bindProps();
@@ -107,7 +110,10 @@ function bindUI() {
 var previewTimer = null;
 function schedulePreview() {
   if (previewTimer) clearTimeout(previewTimer);
-  previewTimer = setTimeout(function() { renderSTL(); }, 500);
+  previewTimer = setTimeout(function() {
+    // 模型改变后 CodeView 会覆盖草稿；自动预览始终使用最新图形生成的源码。
+    renderSTL(generateSCAD(), {generated: true});
+  }, 500);
 }
 
 // ---- 属性面板 ----
@@ -301,19 +307,35 @@ function bindProps() {
   });
 }
 
-function onWasmReady() {
-  S.wasmReady = true;
-  $("status-wasm").textContent = "WASM OK";
-  $("status-wasm").style.color = "#4caf50";
-  $("btn-export").disabled = false;
-  // 自动预览默认开启: WASM 就绪后渲染初始模型 (此前 renderSTL 会被就绪守卫静默丢弃)
-  if (S.autoPreview) renderSTL();
+async function checkServerHealth() {
+  var label = $("status-wasm");
+  try {
+    var response = await fetch("api/health", {cache: "no-store"});
+    var data = await response.json();
+    if (!response.ok || data.status !== "ok") throw new Error(data.message || "服务不可用");
+    S.serverReady = true;
+    var supports3mf = !data.formats || data.formats["3mf"] !== false;
+    $("sel-format").querySelector('option[value="3mf"]').disabled = !supports3mf;
+    if (!supports3mf && $("sel-format").value === "3mf") $("sel-format").value = "stl";
+    label.textContent = supports3mf ? "服务 OK · STL/3MF" : "服务 OK · 仅 STL";
+    label.style.color = supports3mf ? "#4caf50" : "#f39c12";
+    $("btn-export").disabled = false;
+    if (S.autoPreview) renderSTL(generateSCAD(), {generated: true});
+  } catch (err) {
+    S.serverReady = false;
+    label.textContent = "服务未连接";
+    label.style.color = "#e74c3c";
+    $("btn-export").disabled = true;
+    $("status-text").textContent = "无法连接 BoxMaker 服务：运行 node examples/BoxMaker/server.js";
+  }
 }
 
 function resetAll() {
   Model.clearAll();
-  Renderer.rebuildAll();
+  Scene.panX = 0; Scene.panY = 0;
+  Scene.rebuild();
   Overlay.hide();
+  if (Controller) Controller.setTool("select");
   S.wall = 2; S.bottom = 2; S.h = 50; S.divRatio = 0.9;
   $("p-wall").value = 2; $("v-wall").textContent = "2.0";
   $("p-bottom").value = 2; $("v-bottom").textContent = "2.0";
@@ -330,42 +352,51 @@ function resetAll() {
   Settings.syncUI();
   CodeView.refresh();
   if (S.autoPreview) schedulePreview(); // 重置后渲染空模型
-  $("status-text").textContent = "Ready";
+  $("status-text").textContent = "已重置";
 }
 
 // ---- SCAD 生成 ----
 // 导出模型 = 底板(按底板类型, 可无) + 图形挤出(原始嵌套 / 墙偏置); 不生成床轮廓的外壳
 // 图形类型: polygon / rect(含圆角/旋转) / circle(SCAD 圆原语)
 
-// 图形中心 (局部坐标原点; polygon 取包围盒中心)
+// 图形中心 (正多边形/矩形的参数中心; 普通 polygon 取包围盒中心)
 function shapeCenter(s) {
   if (s.type === "circle") return {x: s.points[0].x, y: s.points[0].y};
   if (s.type === "rect") return {x: s.rect.x, y: s.rect.y};
+  if (s.poly) return {x: s.poly.x, y: s.poly.y};
   var b = Model.getBounds(s);
   return {x: (b.minX + b.maxX) / 2, y: (b.minY + b.maxY) / 2};
 }
 
-// 图形局部 2D 表达式 (原点 = 图形中心, 无 translate)
-function shapeLocalExpr(s) {
+// 最终定位后的 2D 表达式 (坐标已是打印板 XY 坐标, 无 z)
+function shapeExpr(s) {
   if (s.type === "circle") {
-    var rad = Math.hypot(s.points[1].x - s.points[0].x, s.points[1].y - s.points[0].y);
-    return "circle(r=" + rad.toFixed(1) + ")";
+    var c = s.points[0];
+    var circleRadius = Math.hypot(s.points[1].x - c.x, s.points[1].y - c.y);
+    return "translate([" + c.x.toFixed(1) + ", " + c.y.toFixed(1) + "])circle(r=" + circleRadius.toFixed(1) + ")";
   }
   if (s.type === "rect") {
     var r = s.rect;
-    var expr = "rotate([0,0," + ((r.angle || 0).toFixed(1)) + "])square([" + r.w.toFixed(1) + ", " + r.h.toFixed(1) + "], center=true)";
-    var rad = r.radius || 0;
-    return rad > 0 ? "offset(r=" + rad.toFixed(1) + ")" + expr : expr;
+    var cornerRadius = r.radius || 0;
+    var rect = "rect([" + r.w.toFixed(1) + ", " + r.h.toFixed(1) + "]" +
+      (cornerRadius > 0 ? ", rounding=" + cornerRadius.toFixed(1) : "") + ")";
+    // BOSL2 rect 默认 anchor=CENTER，与 BoxMaker 的局部中心坐标保持一致。
+    return "translate([" + r.x.toFixed(1) + ", " + r.y.toFixed(1) + "])zrot(" + ((r.angle || 0).toFixed(1)) + ")" + rect;
   }
-  var c = shapeCenter(s);
-  var pts = s.points.map(function(p) { return "[" + (p.x - c.x).toFixed(1) + ", " + (p.y - c.y).toFixed(1) + "]"; }).join(",");
+  if (s.poly) {
+    var poly = s.poly;
+    // Canvas 中 angle=0 的首个顶点在 +Y；OpenSCAD circle($fn=...) 的首个顶点在 +X。
+    var scadAngle = (poly.angle || 0) + 90;
+    return "translate([" + poly.x.toFixed(1) + ", " + poly.y.toFixed(1) + "])zrot(" + scadAngle.toFixed(1) + ")circle(d=" + (poly.radius * 2).toFixed(1) + ", $fn=" + poly.sides + ")";
+  }
+  // 普通多边形的 points 已是最终 bed 坐标；不得再平移或旋转。
+  var pts = s.points.map(function(p) { return "[" + p.x.toFixed(1) + ", " + p.y.toFixed(1) + "]"; }).join(",");
   return "polygon(points=[" + pts + "])";
 }
 
-// 定位后的 2D 表达式 (translate 到图形中心, 2D 无 z)
-function shapeExpr(s) {
-  var c = shapeCenter(s);
-  return "translate([" + c.x.toFixed(1) + ", " + c.y.toFixed(1) + "])" + shapeLocalExpr(s);
+// 将最终 XY 2D 表达式挤出到指定 z；调用方不得再添加 XY 平移。
+function extrudeExpr(expr, height, z) {
+  return "translate([0,0," + z.toFixed(1) + "]) linear_extrude(" + height.toFixed(1) + ") " + expr;
 }
 
 // 偏置包装 (d=0 时不包裹; 正=外偏置, 负=内偏置)
@@ -392,7 +423,7 @@ function exportShapes() {
 }
 
 function generateSCAD() {
-  var scad = "";
+  var scad = "include <BOSL2/std.scad>\n";
 
   var dh = (S.h - S.bottom) * S.divRatio;
   var polys = exportShapes();
@@ -417,7 +448,7 @@ function generateWallsBody(polys, baseH, dh) {
   if (S.outlineMode === "wall") {
     // 墙模式: 每个轮廓按"偏置方向"生成墙:
     //   inner: 原始 − 内偏置(壁厚);  outer: 外偏置(壁厚) − 原始;  both: 各偏壁厚/2 (轮廓为中心线)
-    // 风格: translate([x, y, z]) linear_extrude(h) difference(){ offset(r=a)局部; offset(r=b)局部; };
+    // 图形表达式已包含最终 XY 位置；挤出时仅增加 Z 平移。
     polys.forEach(function(s) {
       var t = (typeof s.wall === "number" && s.wall > 0) ? s.wall : S.defaultWall;
       var h = (typeof s.height === "number" && s.height > 0) ? s.height : dh;
@@ -425,11 +456,10 @@ function generateWallsBody(polys, baseH, dh) {
       if (S.offsetDir === "inner") b = -t;
       else if (S.offsetDir === "outer") a = t;
       else { a = t / 2; b = -t / 2; }
-      var c = shapeCenter(s);
-      var local = shapeLocalExpr(s);
-      out += "  translate([" + c.x.toFixed(1) + ", " + c.y.toFixed(1) + ", " + baseH + "]) linear_extrude(" + h.toFixed(1) + ") difference(){\n";
-      out += "    " + offsetExpr(local, a) + ";\n";
-      out += "    " + offsetExpr(local, b) + ";\n";
+      var expr = shapeExpr(s);
+      out += "  translate([0,0," + baseH.toFixed(1) + "]) linear_extrude(" + h.toFixed(1) + ") difference(){\n";
+      out += "    " + offsetExpr(expr, a) + ";\n";
+      out += "    " + offsetExpr(expr, b) + ";\n";
       out += "  };\n";
     });
     return out;
@@ -445,18 +475,16 @@ function generateWallsBody(polys, baseH, dh) {
       return h._depth === 1 && Model.polygonContains(outer, h);
     });
     var oh = (typeof outer.height === "number" && outer.height > 0) ? outer.height : dh;
-    var oc = shapeCenter(outer);
     if (holes.length > 0) {
       out += "  difference(){\n";
-      out += "    translate([" + oc.x.toFixed(1) + ", " + oc.y.toFixed(1) + ", " + baseH + "]) linear_extrude(" + oh.toFixed(1) + ") " + shapeLocalExpr(outer) + ";\n";
+      out += "    " + extrudeExpr(shapeExpr(outer), oh, baseH) + ";\n";
       holes.forEach(function(h) {
         var hh = (typeof h.height === "number" && h.height > 0) ? h.height : oh;
-        var hc = shapeCenter(h);
-        out += "    translate([" + hc.x.toFixed(1) + ", " + hc.y.toFixed(1) + ", " + (baseH - 0.5) + "]) linear_extrude(" + (hh + 1).toFixed(1) + ") " + shapeLocalExpr(h) + ";\n";
+        out += "    " + extrudeExpr(shapeExpr(h), hh + 1, baseH - 0.5) + ";\n";
       });
       out += "  };\n";
     } else {
-      out += "  translate([" + oc.x.toFixed(1) + ", " + oc.y.toFixed(1) + ", " + baseH + "]) linear_extrude(" + oh.toFixed(1) + ") " + shapeLocalExpr(outer) + ";\n";
+      out += "  " + extrudeExpr(shapeExpr(outer), oh, baseH) + ";\n";
     }
   });
   return out;
@@ -493,98 +521,334 @@ function generatePlateBody(polys) {
   return out;
 }
 
-// ---- WASM 渲染 ----
-async function renderSTL() {
-  if (!S.wasmReady || !window.OpenSCADModule) return;
-  $("status-text").textContent = "Rendering...";
-  var scad = generateSCAD();
-  var ts = Date.now(), fin = "/in" + ts + ".scad", fout = "/out" + ts + ".stl";
+// ---- 服务端渲染 / 导出 ----
+function serverError(response, fallback) {
+  return response.text().then(function(text) {
+    try { return JSON.parse(text).error || fallback; }
+    catch (e) { return text || fallback; }
+  });
+}
+
+async function renderSTL(source, options) {
+  options = options || {};
+  if (!S.serverReady) {
+    $("status-text").textContent = "服务未连接，无法预览";
+    return false;
+  }
+  source = source || generateSCAD();
+  if (!source.trim()) {
+    $("status-text").textContent = "SCAD 代码为空";
+    return false;
+  }
+
+  var seq = ++S.renderSeq;
+  if (S.renderAbort) S.renderAbort.abort();
+  var abort = new AbortController();
+  S.renderAbort = abort;
+  $("status-text").textContent = options.manual ? "正在预览手写 SCAD..." : "正在生成 3D 预览...";
+  var previewButton = $("cw-preview");
+  if (previewButton) previewButton.disabled = true;
+
   try {
-    var FS = window.OpenSCADModule.FS;
-    try { FS.unlink(fin); } catch (e) {}
-    try { FS.unlink(fout); } catch (e) {}
-    FS.writeFile(fin, scad);
-    window.OpenSCADModule.callMain(["--export-format", "binstl", "-o", fout, fin]);
-    var data = FS.readFile(fout, {encoding: "binary"});
-    S.stlData = new Uint8Array(data.length);
-    S.stlData.set(data);
-    var faces = S.stlData.length > 84 ? Math.round((S.stlData.length - 84) / 50) : 0;
-    $("status-text").textContent = "Done: " + faces + " faces";
-    Preview3D.loadSTL(S.stlData.buffer.slice(S.stlData.byteOffset, S.stlData.byteOffset + S.stlData.byteLength));
-    CodeView.refresh();
-    try { FS.unlink(fin); FS.unlink(fout); } catch (e) {}
+    var response = await fetch("api/render?format=stl", {
+      method: "POST",
+      headers: {"Content-Type": "text/plain; charset=utf-8"},
+      body: source,
+      signal: abort.signal
+    });
+    if (!response.ok) throw new Error(await serverError(response, "服务端渲染失败"));
+    var buffer = await response.arrayBuffer();
+    if (seq !== S.renderSeq) return false;
+    var faces = buffer.byteLength >= 84 ? Math.floor((buffer.byteLength - 84) / 50) : 0;
+    Preview3D.loadSTL(buffer);
+    $("status-text").textContent = "预览完成：" + faces + " 个三角面";
+    return true;
   } catch (err) {
-    console.error("renderSTL error:", err);
-    $("status-text").textContent = "Error: " + (err && err.message ? err.message : err);
+    if (err.name === "AbortError") return false;
+    if (seq === S.renderSeq) {
+      console.error("BoxMaker render error:", err);
+      $("status-text").textContent = "预览失败：" + (err.message || err);
+    }
+    return false;
+  } finally {
+    if (seq === S.renderSeq) S.renderAbort = null;
+    if (previewButton) previewButton.disabled = !S.serverReady;
   }
 }
 
-function downloadSTL() {
-  if (!S.stlData) return;
-  var blob = new Blob([S.stlData], {type: "application/octet-stream"});
-  var url = URL.createObjectURL(blob);
-  var a = document.createElement("a");
-  a.href = url; a.download = "boxmaker.stl"; a.click();
-  URL.revokeObjectURL(url);
+async function exportCurrentSource() {
+  if (!S.serverReady) {
+    $("status-text").textContent = "服务未连接，无法导出";
+    return;
+  }
+  var format = $("sel-format").value;
+  var source = (CodeView && CodeView.getSource) ? CodeView.getSource() : generateSCAD();
+  if (!source.trim()) {
+    $("status-text").textContent = "SCAD 代码为空";
+    return;
+  }
+  var button = $("btn-export");
+  button.disabled = true;
+  $("status-text").textContent = "正在导出 " + format.toUpperCase() + "...";
+  try {
+    var response = await fetch("api/export?format=" + encodeURIComponent(format), {
+      method: "POST",
+      headers: {"Content-Type": "text/plain; charset=utf-8"},
+      body: source
+    });
+    if (!response.ok) throw new Error(await serverError(response, "服务端导出失败"));
+    var data = await response.arrayBuffer();
+    var mime = format === "3mf" ? "application/vnd.ms-package.3dmanufacturing-3dmodel+xml" : "model/stl";
+    var url = URL.createObjectURL(new Blob([data], {type: mime}));
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = "boxmaker." + format;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
+    $("status-text").textContent = format.toUpperCase() + " 已导出";
+  } catch (err) {
+    console.error("BoxMaker export error:", err);
+    $("status-text").textContent = "导出失败：" + (err.message || err);
+  } finally {
+    button.disabled = !S.serverReady;
+  }
 }
 
 // ---- 右键菜单 ----
-function showContextMenu(x, y, shapeId) {
+function showContextMenu(x, y, hits) {
+  if (!hits || !hits.length) return;
   var old = document.querySelector(".ctx-menu");
   if (old) old.remove();
+
   var menu = document.createElement("div");
   menu.className = "ctx-menu";
-  menu.style.cssText = "position:fixed;left:" + x + "px;top:" + y + "px;background:#1a1a1a;border:1px solid #3a3a3a;border-radius:4px;padding:4px 0;z-index:100;box-shadow:0 4px 8px rgba(0,0,0,.5)";
-  var add = function(text, fn) {
-    var d = document.createElement("div");
-    d.textContent = text;
-    d.style.cssText = "padding:6px 12px;font-size:12px;color:#ccc;cursor:pointer";
-    d.onmouseenter = function() { d.style.background = "#333"; };
-    d.onmouseleave = function() { d.style.background = "transparent"; };
-    d.onclick = function() { fn(); menu.remove(); };
-    menu.appendChild(d);
+  menu.style.left = x + "px";
+  menu.style.top = y + "px";
+  menu.addEventListener("mousedown", function(e) { e.stopPropagation(); });
+  menu.addEventListener("click", function(e) { e.stopPropagation(); });
+
+  var add = function(text, fn, className) {
+    var item = document.createElement("button");
+    item.type = "button";
+    item.className = className || "ctx-item";
+    item.textContent = text;
+    item.onclick = function() { fn(); menu.remove(); };
+    menu.appendChild(item);
   };
-  add("保存到图形库", function() { saveToLib(shapeId); });
-  add("删除", function() { Model.removeShape(shapeId); Renderer.rebuildAll(); });
+  var addDivider = function() {
+    var divider = document.createElement("div");
+    divider.className = "ctx-divider";
+    menu.appendChild(divider);
+  };
+  var iconFor = function(shape) {
+    return shape.type === "rect" ? "⬜" : shape.type === "circle" ? "⭕" : (shape.poly ? "⬡" : "✏");
+  };
+
+  var title = document.createElement("div");
+  title.className = "ctx-title";
+  title.textContent = "点击位置的图形";
+  menu.appendChild(title);
+  hits.forEach(function(shape, depth) {
+    var depthLabel = depth === 0 ? "顶层" : "下层 " + depth;
+    add(iconFor(shape) + " " + shape.id + " · " + depthLabel, function() {
+      Controller.selectShapeById(shape.id, false);
+    }, "ctx-item ctx-depth-item");
+  });
+
+  var topShapeId = hits[0].id;
+  addDivider();
+  add("保存顶层图形到图形库", function() { saveToLib(topShapeId); });
+  add("删除顶层图形", function() {
+    if (Controller) Controller.clearHitStack();
+    Model.removeShape(topShapeId);
+    Renderer.rebuildAll();
+  }, "ctx-item ctx-danger");
   document.body.appendChild(menu);
+
+  var rect = menu.getBoundingClientRect();
+  menu.style.left = Math.max(4, Math.min(x, window.innerWidth - rect.width - 4)) + "px";
+  menu.style.top = Math.max(4, Math.min(y, window.innerHeight - rect.height - 4)) + "px";
   document.addEventListener("click", function() { menu.remove(); }, {once: true});
 }
 
 // ---- 用户图形库 ----
-function saveToLib(shapeId) {
-  var shape = Model.getShape(shapeId);
-  if (!shape) return;
-  var lib = JSON.parse(localStorage.getItem("boxmaker_lib") || "[]");
-  if (lib.length >= 20) lib.shift();
-  lib.push({name: shape.id, type: shape.type, points: shape.points, toolType: shape.toolType,
-            wall: shape.wall, height: shape.height});
-  localStorage.setItem("boxmaker_lib", JSON.stringify(lib));
+function cloneLibraryValue(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function setLibraryStatus(message) {
+  var status = $("status-text");
+  if (status) status.textContent = message;
+}
+
+function getUserLibrary() {
+  var raw;
+  try {
+    raw = localStorage.getItem("boxmaker_lib");
+  } catch (e) {
+    setLibraryStatus("无法读取用户图形库");
+    return [];
+  }
+  try {
+    var lib = JSON.parse(raw || "[]");
+    return Array.isArray(lib) ? lib : [];
+  } catch (e) {
+    try {
+      localStorage.removeItem("boxmaker_lib");
+      setLibraryStatus("用户图形库数据损坏，已重置");
+    } catch (removeError) {
+      setLibraryStatus("用户图形库数据损坏，且无法重置");
+    }
+    return [];
+  }
+}
+
+function writeUserLibrary(lib) {
+  try {
+    localStorage.setItem("boxmaker_lib", JSON.stringify(lib));
+    return true;
+  } catch (e) {
+    setLibraryStatus("无法保存用户图形库");
+    return false;
+  }
+}
+
+function setLibraryManageMode(managing) {
+  S.libraryManageMode = !!managing;
+  if (S.libraryManageMode && Controller.activeTool === "library") Controller.setTool("select");
   renderLib();
 }
 
+function deleteFromLib(index) {
+  var lib = getUserLibrary();
+  if (index < 0 || index >= lib.length) return false;
+  var next = lib.slice();
+  next.splice(index, 1);
+  if (!writeUserLibrary(next)) return false;
+  if (Controller.activeTool === "library") Controller.setTool("select");
+  renderLib();
+  setLibraryStatus("已从用户图形库删除");
+  return true;
+}
+
+function isExportableShape(shape) {
+  return shape && (shape.type === "rect" || shape.type === "circle" ||
+    (shape.type === "polygon" && shape.points && shape.points.length >= 3));
+}
+
+function saveToLib(shapeId) {
+  var shape = Model.getShape(shapeId);
+  if (!isExportableShape(shape)) return;
+  var lib = getUserLibrary();
+  if (lib.length >= 20) lib.shift();
+  var item = {
+    schema: 2,
+    name: shape.id,
+    type: shape.type,
+    toolType: shape.toolType,
+    points: cloneLibraryValue(shape.points),
+    wall: shape.wall,
+    height: shape.height
+  };
+  if (shape.rect) item.rect = cloneLibraryValue(shape.rect);
+  if (shape.poly) item.poly = cloneLibraryValue(shape.poly);
+  lib.push(item);
+  if (!writeUserLibrary(lib)) return;
+  renderLib();
+  setLibraryStatus("已保存到用户图形库");
+}
+
+function templateCenter(item) {
+  if (item.rect) return {x: item.rect.x, y: item.rect.y};
+  if (item.poly) return {x: item.poly.x, y: item.poly.y};
+  if (item.type === "circle" && item.points && item.points[0]) return item.points[0];
+  var points = item.points || [];
+  var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  points.forEach(function(p) {
+    minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
+    maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
+  });
+  return points.length ? {x: (minX + maxX) / 2, y: (minY + maxY) / 2} : {x: 0, y: 0};
+}
+
+function placeLibraryShape(template, x, y) {
+  if (!template || !template.points) return null;
+  var item = cloneLibraryValue(template);
+  var sourceCenter = templateCenter(item);
+  var dx = x - sourceCenter.x, dy = y - sourceCenter.y;
+  item.points.forEach(function(p) { p.x += dx; p.y += dy; });
+  var shape = Model.addShape(item.type, item.points, item.toolType || "pen");
+  if (item.rect) {
+    shape.rect = item.rect;
+    shape.rect.x += dx; shape.rect.y += dy;
+    shape.points = [
+      {x: shape.rect.x - shape.rect.w / 2, y: shape.rect.y - shape.rect.h / 2},
+      {x: shape.rect.x + shape.rect.w / 2, y: shape.rect.y + shape.rect.h / 2}
+    ];
+  }
+  if (item.poly) {
+    shape.poly = item.poly;
+    shape.poly.x += dx; shape.poly.y += dy;
+  }
+  if (typeof item.wall === "number" && item.wall > 0) shape.wall = item.wall;
+  if (typeof item.height === "number" && item.height > 0) shape.height = item.height;
+  Renderer.rebuildAll();
+  showProps(shape.id);
+  return shape;
+}
+
 function renderLib() {
-  var lib = JSON.parse(localStorage.getItem("boxmaker_lib") || "[]");
+  var lib = getUserLibrary();
   var el = $("lib-items");
+  var manageBtn = $("btn-lib-manage");
+  if (manageBtn) {
+    manageBtn.classList.toggle("active", S.libraryManageMode);
+    manageBtn.setAttribute("aria-pressed", String(S.libraryManageMode));
+    manageBtn.textContent = S.libraryManageMode ? "完成" : "管理";
+    manageBtn.title = S.libraryManageMode ? "退出用户图形管理" : "管理用户图形";
+  }
   if (!el) return;
   el.innerHTML = "";
   lib.forEach(function(item, i) {
-    var btn = document.createElement("div");
+    if (!item || typeof item !== "object") return;
+    var btn = document.createElement("button");
+    btn.type = "button";
     btn.className = "lib-item";
-    btn.textContent = item.name ? item.name.substring(0, 4) : i;
-    btn.title = item.name;
-    btn.onclick = function() { loadFromLib(i); };
-    el.appendChild(btn);
+    var label = item.type === "rect" ? "矩形模板" : item.type === "circle" ? "圆形模板" : item.poly ? "多边形模板" : "钢笔模板";
+    btn.textContent = label;
+    btn.title = (item.name || label) + "：选中后可重复点击放置";
+    btn.onclick = function() { Controller.setLibraryTool(lib[i], btn); };
+
+    if (!S.libraryManageMode) {
+      el.appendChild(btn);
+      return;
+    }
+
+    var row = document.createElement("div");
+    row.className = "lib-row";
+    row.appendChild(btn);
+    var del = document.createElement("button");
+    del.type = "button";
+    del.className = "lib-delete";
+    del.textContent = "×";
+    del.title = "删除 " + (item.name || label);
+    del.setAttribute("aria-label", del.title);
+    del.onclick = function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      deleteFromLib(i);
+    };
+    row.appendChild(del);
+    el.appendChild(row);
   });
 }
 
+// 兼容旧调用：图库点击改为进入重复放置模式，而非立即创建一个形状。
 function loadFromLib(i) {
-  var lib = JSON.parse(localStorage.getItem("boxmaker_lib") || "[]");
-  if (!lib[i]) return;
-  var s = Model.addShape(lib[i].type, lib[i].points, lib[i].toolType || "pen");
-  // 恢复保存时的导出属性 (旧数据无此字段 → 保持默认值)
-  if (typeof lib[i].wall === "number" && lib[i].wall > 0) s.wall = lib[i].wall;
-  if (typeof lib[i].height === "number" && lib[i].height > 0) s.height = lib[i].height;
-  Renderer.rebuildAll();
+  var lib = getUserLibrary();
+  if (lib[i]) Controller.setLibraryTool(lib[i], null);
 }
 
 // ---- 对象列表 (草图 + 所有图形) ----
@@ -636,8 +900,9 @@ function renderObjectList() {
 
 // 列表点击 → 选中画布上的图形
 function selectShapeFromList(id) {
-  Model.selectedId = id;
   if (Model.editId) { Model.editId = null; Overlay.hide(); }
+  if (Controller && Controller.selectShapeById && Controller.selectShapeById(id, false)) return;
+  Model.selectedId = id;
   canvas.discardActiveObject();
   var obj = Renderer.getFabric(id);
   // 隐藏图形仅高亮列表行, 不激活画布选中框
