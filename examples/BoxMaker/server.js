@@ -51,7 +51,9 @@ function defaultOpenSCADBinary() {
   return candidates.find(existsSync) || candidates[0];
 }
 
-const OPENSCAD_BIN = process.env.OPENSCAD_BIN || defaultOpenSCADBinary();
+// 相对路径以进程 cwd 解析后转为绝对路径: spawn 的相对可执行路径按子进程 cwd
+// (REPO_ROOT) 解析, 与 existsSync 的进程 cwd 解析不一致, 会导致 ENOENT。
+const OPENSCAD_BIN = path.resolve(process.env.OPENSCAD_BIN || defaultOpenSCADBinary());
 
 let running = 0;
 const waiters = [];
