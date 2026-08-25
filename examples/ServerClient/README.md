@@ -53,7 +53,7 @@ npm start
 | `GET` | `/api/health` | 服务状态、版本、并发数 |
 | `POST` | `/api/render?format=binmesh\|stl` | SCAD 源码 → 索引化二进制网格（默认 `binmesh`，含每面颜色；`stl` 为兼容回退） |
 | `POST` | `/api/preview` | SCAD 源码 → PNG 图片 |
-| `POST` | `/api/export?format=<格式>&F=<耗材规格>` | SCAD 源码 → 任意导出格式；`format=3mf` 时可用重复 `?F=Name\|#RRGGBBAA` 配置耗材（MMU 颜色分割与命名） |
+| `POST` | `/api/export?format=<格式>&F=<耗材规格>` | SCAD 源码 → 任意导出格式；`format=3mf` 时可用重复 `?F=Name\|spec` 配置耗材（spec 支持纯色 `#RRGGBBAA`、渐变、夜光，见「3MF 耗材配置」章节） |
 | `POST` | `/api/params` | SCAD 源码 → Customizer 参数定义 JSON |
 
 > 二进制响应（binmesh/STL/文本类导出）支持 gzip：按 `Accept-Encoding` 协商，
@@ -94,6 +94,57 @@ curl -X POST --data-binary @demo-box.scad http://127.0.0.1:3000/api/params
 curl -X POST --data-binary @demo-box.scad \
   'http://127.0.0.1:3000/api/render?D=box_width%3D50&D=material%3D"ABS"' -o result.stl
 ```
+
+## 3MF 耗材配置（纯色 / 夜光 / 渐变）
+
+3MF v4 导出支持按挤出机配置耗材类型，实现 MMU 多色分割。格式为
+`?F=Name|spec`（重复传递，顺序 = 挤出机顺序），`spec` 支持三种类型：
+
+| 类型 | spec 格式 | 说明 |
+|------|-----------|------|
+| 纯色 | `#RRGGBBAA` | 单一颜色 |
+| 渐变色 | `gradient:#RRGGBBAA,#RRGGBBAA;angle:N` | 两色渐变；`angle` 为渐变角度（`0`=竖直，`90`=水平） |
+| 夜光色 | `glow:#RRGGBBAA,#RRGGBBAA` | 双色夜光：第一个为实体色，第二个为发光色 |
+
+写入 3MF 时：第一个颜色作为 `filament_colour`（切片器 paint_color 颜色匹配），
+完整 spec 原样写入 `filament_colour_info` 供切片器还原；耗材名称与内置
+Anycubic 耗材库模糊匹配——名称含 `Glow` 时自动匹配 "Anycubic PLA Glow" 夜光耗材参数。
+
+### 客户端配置界面
+
+3D 预览成功后，工具栏出现 **🎨 配置耗材** 按钮：
+
+- 每个模型颜色对应一个挤出机，可编辑名称与颜色，类型下拉选择
+  **纯色 / 渐变（→白）/ 夜光（→亮蓝）**，↑↓ 调整挤出顺序
+- 保存后立即回馈预览着色——所见即 3MF 导出所用颜色
+- 重置恢复 CLI 自动检测（直接按模型调色板导出）
+
+客户端渐变的第二色固定为白色（`#FFFFFFFF`，竖直渐变 `angle:0`），
+夜光的发光色固定为亮蓝（`#0000FFFF`）；需要自定义第二色或渐变角度时，
+使用 curl 直接传 spec（见下）。
+
+### curl 示例
+
+```bash
+# 夜光色耗材（荧光绿 → 亮蓝双色）
+curl -X POST --data-binary @demo-box.scad \
+  'http://127.0.0.1:3000/api/export?format=3mf&F=PLA%20Glow%7Cglow%3A%2300FF00FF%2C%230000FFFF' \
+  -o result.3mf
+
+# 渐变色耗材（红 → 白，水平渐变 angle:90）
+curl -X POST --data-binary @demo-box.scad \
+  'http://127.0.0.1:3000/api/export?format=3mf&F=PLA%20Gradient%7Cgradient%3A%23FF0000FF%2C%23FFFFFFFF%3Bangle%3A90' \
+  -o result.3mf
+
+# 混合配置：纯色 + 夜光 + 渐变（3 个挤出机，顺序即挤出机顺序）
+curl -X POST --data-binary @demo-box.scad \
+  'http://127.0.0.1:3000/api/export?format=3mf&F=PLA%20Red%7C%23FF0000FF&F=PLA%20Glow%7Cglow%3A%2300FF00FF%2C%230000FFFF&F=PLA%20Grad%7Cgradient%3A%23FF0000FF%2C%23FFFFFFFF%3Bangle%3A45' \
+  -o result.3mf
+```
+
+> URL 编码：`#` 必须写为 `%23`（否则被截断为 URL 片段），`|` 建议写为 `%7C`；
+> `:`、`,`、`;` 可直接使用，也可按 `%3A`、`%2C`、`%3B` 编码。
+> 客户端「🎨 配置耗材」对话框自动完成全部编码。
 
 ## Customizer 参数面板
 
